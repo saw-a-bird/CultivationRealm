@@ -12,7 +12,6 @@ import re
 
 import ctypes
 import pystray
-from PIL import Image, ImageDraw
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -41,6 +40,7 @@ SESSION_RESULT_REWARD = 2
 # daily_bonus = min(11, 5 + (self.getting_started_streak - 1)) # starts at 5 to 11XP max
 
 # ---------------- CULTIVATION / XP SYSTEM ----------------
+
 REALMS = [
     (0, 1, "MORTAL", "You are but an ordinary mortal.",
     "No power. No foundation. Only the potential to begin.", 50),
@@ -87,17 +87,111 @@ REALMS = [
     (121, 130, "DAO ANCESTOR", "Comprehend the origin of all things.",
         "You are approaching the source of the path itself.", 35000),
 
-    (131, float("inf"), "TRANSCENDENCE", "Beyond the Dao. Beyond the heavens.",
+    (131, float("inf"), "FANG YUAN", "Beyond the Dao. Beyond the heavens.",
         "There are no limits left to inherit.", 50000),
 ]
 
+# ---------------- QUOTES -------------------------
 
-quotes = [
+HEADER_QUOTES = [
     "CONSISTENCY  •  DISCIPLINE  •  PROGRESS  •  MASTERY",
     "XP rewards effort. Streaks reward consistency. Realms reward long-term dedication.",
     "Motivation gets you started. Consistency keeps you moving.",
     "Be patient with the process, but relentless with your commitment."
 ]
+
+# --------------- LEVEL UP MESSAGES ------------------
+
+LEVEL_UP_MESSAGES = [
+    "No more excuses. Your next sequence awaits!",
+    "Another breakthrough! Keep ascending!",
+    "The pathway to greatness is paved with consistency!",
+    "Even a demigod started as a mere mortal!",
+    "One step closer to becoming a legend!",
+    "Your cultivation has improved. Keep going!",
+    "The heavens have witnessed your progress!",
+    "Another day, another opportunity to defy fate!",
+    "Keep grinding. Your future self will thank you!",
+    "A true cultivator never wastes a breakthrough!",
+    "Your Dao is becoming clearer!",
+    "Even immortality requires patience!",
+    "You're slowly becoming the monster you once feared!",
+    "The journey to the peak never ends!",
+    "Your legend won't write itself!",
+    "A little closer to transcending mortality!",
+    "Every action is an investment in your future!",
+    "Keep going. The heavens are not your limit!",
+]
+
+
+# -------------- REVIEW RESPONSES --------------------
+
+REVIEW_RESPONSES = {
+    "YES!": [
+        "That's what I'm talking about! You crushed it! 🎉",
+        "Mission accomplished! Be proud of yourself!",
+        "You set a goal and delivered. Excellent work!",
+        "Procrastination never stood a chance!",
+        "Another victory! Your legend grows!",
+        "Even Klein would approve of this level of preparation!",
+        "The Fool's honor is maintained. Excellent work!",
+        "Today, you were the protagonist of your own story!",
+        "You have successfully advanced your sequence!",
+        "Not even the Nightmare Spell could stop you today!",
+        "Sunny would be proud. Maybe. He'd probably still complain.",
+        "A flawless execution. Even Fang Yuan would acknowledge that!",
+        "You have taken another step toward immortality!",
+        "Your perseverance rivals that of a true Sword God!",
+        "The heavens have witnessed your dedication!",
+        "You've earned your share of good karma today!",
+        "Another fate-defying achievement!",
+        "Your future self just gained a powerful ally!",
+        "You didn't wait for an opportunity. You created one!",
+        "The world belongs to those who take action!",
+    ],
+
+    "PARTIALLY": [
+        "Good progress! Even a demigod wasn't born overnight!",
+        "Not a complete victory, but your sequence has advanced!",
+        "Every small step brings you closer to the peak!",
+        "Even Sunny needs more than one attempt!",
+        "The path of cultivation is never easy. Keep going!",
+        "A minor setback in the grand scheme of things!",
+        "Fang Yuan wouldn't waste time regretting this. Neither should you!",
+        "Your progress may be slow, but your Dao remains yours!",
+        "One step forward is better than remaining stagnant!",
+        "Not bad! Your next breakthrough is within reach!",
+        "Even the strongest cultivators need time to recover!",
+        "The Nightmare Spell is cruel, but so is your determination!",
+        "You're gathering experience. Use it wisely!",
+        "The road to the peak is paved with imperfect victories!",
+        "A partial success is still a success. Build upon it!",
+        "Your story isn't over. This is just another chapter!",
+    ],
+
+    "NOT YET": [
+        "Don't panic. Even Klein had to survive some ridiculous situations!",
+        "The Fool's journey wasn't completed in a single day!",
+        "Even Sunny has suffered worse setbacks. Probably.",
+        "You have encountered a Nightmare. Now learn from it!",
+        "Fang Yuan wouldn't waste time crying over a failed attempt!",
+        "A true cultivator doesn't abandon their Dao after one setback!",
+        "The heavens may oppose you, but your journey continues!",
+        "You failed today. Don't let it become your Sequence 0!",
+        "Even a Sword God needs time to sharpen his blade!",
+        "Your story has encountered a difficult arc. Keep reading!",
+        "Not every chapter can be a victory. Keep turning the pages!",
+        "The Nightmare Spell has claimed today's victory. Take revenge tomorrow!",
+        "Even the strongest characters have their lowest moments!",
+        "Don't let temporary circumstances dictate your destiny!",
+        "Fang Yuan would call this a minor inconvenience!",
+        "The road to immortality is paved with countless failures!",
+        "You can still become the protagonist of your own story!",
+        "One failed session won't destroy your entire cultivation!",
+        "Your enemies are getting stronger. So should you!",
+        "Regroup, recover, and return stronger!",
+    ]
+}
 
 class FocusTimer:
     def __init__(self, root):
@@ -588,7 +682,7 @@ class FocusTimer:
         # Quote Label Header
         quote_label = tk.Label(
             header,
-            text=quotes[0],
+            text=HEADER_QUOTES[0],
             bg=BG,
             fg=MUTED,
             font=("Segoe UI", 8, "bold"),
@@ -600,15 +694,15 @@ class FocusTimer:
             current = quote_label.cget("text")
 
             try:
-                index = quotes.index(current)
-                next_index = (index + 1) % len(quotes)
+                index = HEADER_QUOTES.index(current)
+                next_index = (index + 1) % len(HEADER_QUOTES)
             except ValueError:
                 next_index = 0
 
-            quote_label.config(text=quotes[next_index])
+            quote_label.config(text=HEADER_QUOTES[next_index])
 
         def reset_quote(event=None):
-            quote_label.config(text=quotes[0])
+            quote_label.config(text=HEADER_QUOTES[0])
 
         quote_label.bind("<Button-1>", change_quote)
         quote_label.bind("<Button-3>", reset_quote)
@@ -2422,14 +2516,7 @@ class FocusTimer:
             start_hidden=True
         )
 
-        messages = [
-            "Yezzi mel excuses. Keep ascending!",
-            "Ya weldi, another breakthrough!",
-            "Hahaha sa7it, kammal hakka!",
-            "Mriguel barcha! Keep grinding!",
-        ]
-
-        message = random.choice(messages)
+        message = random.choice(LEVEL_UP_MESSAGES)
         realm = self.get_realm()
 
         # Sparkle background
@@ -3062,36 +3149,6 @@ class FocusTimer:
             wraplength=340
         ).pack(pady=15)
 
-        responses = {
-            "YES!": [
-                "M3alem! That's what I'm talking about, bro! 🎉",
-                "Mission accomplished! Be proud of yourself!",
-                "You set a goal and delivered. Excellent work!",
-                "Nice! You actually pulled it off. Well done!",
-                "That's what I'm talking about! Keep winning!",
-                "Chnowa? You actually cooked! 🔥",
-                "Winek the procrastination now? You smashed it!",
-                "Another victory! Ya hasra, and you thought you couldn't do it!"
-            ],
-            "PARTIALLY": [
-                "Mriguel! At least we moved forward. Keep going! 💪",
-                "Great progress! You're getting there! 💪",
-                "Every piece you built counts. Keep going!",
-                "You're making progress. Don't underestimate that!",
-                "Rome wasn't built in a day. Keep at it!"
-            ],
-            "NOT YET": [
-                "Don't beat yourself up. Try again!",
-                "Not your best session? Happens. Next time we cook!",
-                "Anime can wait. Your comeback arc starts here! 😤",
-                "The main character doesn't quit halfway through!",
-                "Chnowa صار? Even Luffy had to train. Keep grinding!",
-                "Stop watching other people's adventures. Build yours!🔥",
-                "Manga spoilers: you eventually figure it out. Keep going!",
-                "Imagine explaining to your future self that you quit here!",
-            ]
-        }
-
         colors = {
             "YES!": "#6cce91",
             "PARTIALLY": "#e8bb69",
@@ -3156,7 +3213,7 @@ class FocusTimer:
         buttons = tk.Frame(popup_container, bg="#171923")
         buttons.pack(pady=(0, 20))
 
-        for choice in responses:
+        for choice in REVIEW_RESPONSES:
             tk.Button(
                 buttons,
                 text=choice,
