@@ -7,7 +7,7 @@ Turn your daily tasks into an epic journey of power and discipline. Cultivation 
 Explore the different features of Cultivation Realm:
 | Screenshot | Feature |
 |---|---|
-| ![Dashboard](screenshots/C1.PNG) | Dashboard – View your cultivation progress, XP, and current realm. |
+| ![Dashboard](screenshots/C1.PNG) | Dashboard – View your cultivation progress, XP, and current realm.\nCreate a new bounty/task\nStart a Cultivation/Mission Session  |
 | ![Bounty Board](screenshots/C2.PNG) | Bounty Board – Create, manage, and organize your tasks. |
 | ![Chronicle](screenshots/C3.PNG) | Chronicle – Review your completed sessions, bounties, and achievements. |
 | ![Focus Timer](screenshots/C4.PNG) | Focus Timer – Showcase the immersive cultivation session timer. |
