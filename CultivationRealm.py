@@ -35,8 +35,21 @@ RED = "#F08080"
 BLUE = "#79B8F5"
 
 # --------- SMALL REWARDS
-SESSION_START_REWARD = 1
-SESSION_RESULT_REWARD = 2
+def get_cultivation_session_reward(elapsed):
+    # Duration-based XP rewards
+    if elapsed < 60:
+        xp_reward = 0
+    elif elapsed < 600:
+        xp_reward = 1
+    elif elapsed < 1500:
+        xp_reward = 2
+    elif elapsed < 3000:
+        xp_reward = 4
+    elif elapsed < 5400:
+        xp_reward = 7
+    else:
+        xp_reward = 10
+    return xp_reward
 
 # daily_bonus = min(11, 5 + (self.getting_started_streak - 1)) # starts at 5 to 11XP max
 
@@ -194,6 +207,9 @@ REVIEW_RESPONSES = {
     ]
 }
 
+
+# -------------- MAIN CLASS --------------------
+
 class FocusTimer:
     def __init__(self, root):
         self.root = root
@@ -236,6 +252,8 @@ class FocusTimer:
 
         self.xp = 0
         self.level = 0
+        self.total_completed_bounties = 0
+
         if getattr(sys, "frozen", False):
             app_folder = os.path.dirname(sys.executable)
         else:
@@ -744,8 +762,7 @@ class FocusTimer:
 
         self.rank_label = tk.Label(
             rank_content,
-            text=getattr(self, "rank_label", None).cget("text")
-            if hasattr(self, "rank_label") else "Novice Cultivator",
+            text="Novice Cultivator",
             bg=PANEL,
             fg=PURPLE,
             font=("Segoe UI", 16, "bold")
@@ -754,49 +771,96 @@ class FocusTimer:
 
         self.level_label = tk.Label(
             rank_content,
-            text="Level 0",
+            text="LEVEL 0",
             bg=PANEL,
             fg=TEXT,
             font=("Segoe UI", 9, "bold")
         )
         self.level_label.pack(anchor="w", pady=(3, 0))
 
+        # Realm description
         self.rank_description = tk.Label(
             rank_content,
-            text="Every completed mission strengthens your path.",
+            text="You are but an ordinary mortal.",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 8),
-            wraplength=280,
-            justify="left"
+            anchor="w"
         )
-        self.rank_description.pack(anchor="w", pady=(4, 7))
+        self.rank_description.pack(fill="x", pady=(3, 10))
+
+        # XP + percentage
+        xp_header = tk.Frame(rank_content, bg=PANEL)
+        xp_header.pack(fill="x")
 
         self.xp_label = tk.Label(
-            rank_content,
-            text="XP: 0",
+            xp_header,
+            text="5 / 50 XP",
             bg=PANEL,
             fg=GOLD,
-            font=("Segoe UI", 9, "bold")
+            font=("Segoe UI", 10, "bold")
         )
-        self.xp_label.pack(anchor="w")
+        self.xp_label.pack(side="left")
+
+        self.xp_percentage_label = tk.Label(
+            xp_header,
+            text="10%",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 8)
+        )
+        self.xp_percentage_label.pack(side="right")
+
+        # Progress bar styling
+        style = ttk.Style()
+
+        style.configure(
+            "Cultivation.Horizontal.TProgressbar",
+            troughcolor="#303548",
+            background=PURPLE,
+            bordercolor="#303548",
+            lightcolor=PURPLE,
+            darkcolor=PURPLE,
+            thickness=9
+        )
 
         self.xp_progress = ttk.Progressbar(
             rank_content,
             orient="horizontal",
             mode="determinate",
-            maximum=100
+            maximum=100,
+            style="Cultivation.Horizontal.TProgressbar"
         )
-        self.xp_progress.pack(fill="x", pady=5)
+        self.xp_progress.pack(fill="x", pady=(5, 4))
 
+        # Remaining XP
         self.total_xp_label = tk.Label(
             rank_content,
-            text="Total XP: 0",
+            text="45 XP to next level",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 8)
         )
         self.total_xp_label.pack(anchor="w")
+
+        # Separator
+        tk.Frame(
+            rank_content,
+            bg=BORDER,
+            height=1
+        ).pack(fill="x", pady=(10, 8))
+
+        # Next breakthrough
+        self.next_realm_label = tk.Label(
+            rank_content,
+            text="✦  NEXT BREAKTHROUGH: THE PATH OF INITIATION",
+            bg=PANEL,
+            fg=GOLD,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+            justify="left"
+        )
+        self.next_realm_label.pack(fill="x")
 
         # region DAILY STREAK & LIFETIME XP
 
@@ -805,6 +869,7 @@ class FocusTimer:
 
         stats_frame.columnconfigure(0, weight=1)
         stats_frame.columnconfigure(1, weight=1)
+        stats_frame.columnconfigure(2, weight=1)
 
         # DAILY STREAK
         streak_card, streak_content = make_card(
@@ -814,22 +879,14 @@ class FocusTimer:
 
         self.dashboard_streak_card = tk.Label(
             streak_content,
-            text=f"🔥  {self.getting_started_streak} days",
+            text=f"🔥  {self.getting_started_streak} "
+                f"{'day' if self.getting_started_streak == 1 else 'days'}",
             bg=PANEL,
             fg=GOLD,
             font=("Segoe UI", 17, "bold")
         )
         
         self.dashboard_streak_card.pack(anchor="w")
-
-        tk.Label(
-            streak_content,
-            text="Consistency",
-            bg=PANEL,
-            fg=MUTED,
-            font=("Segoe UI", 8)
-        ).pack(anchor="w", pady=(3, 0))
-
 
         # LIFETIME XP
         lifetime_card, lifetime_content = make_card(
@@ -847,13 +904,22 @@ class FocusTimer:
         
         self.dashboard_xp_card.pack(anchor="w")
 
-        tk.Label(
-            lifetime_content,
-            text="Total earned",
+        # TOTAL BOUNTIES
+        total_bounties_card, total_bounties_content = make_card(
+            stats_frame, "Bounties Completed", "Total victories"
+        )
+        total_bounties_card.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
+
+        self.dashboard_bounty_card = tk.Label(
+            total_bounties_content,
+            text=f"⚔  {self.total_completed_bounties} "
+                f"{'Bounty' if self.total_completed_bounties == 1 else 'Bounties'}",
             bg=PANEL,
-            fg=MUTED,
-            font=("Segoe UI", 8)
-        ).pack(anchor="w", pady=(3, 0))
+            fg=GOLD,
+            font=("Segoe UI", 17, "bold")
+        )
+
+        self.dashboard_bounty_card.pack(anchor="w")
 
         # endregion
 
@@ -997,16 +1063,16 @@ class FocusTimer:
         # region Mission controls
         
         control_card, control_content = make_card(
-            right, "Mission Control", "Focus begins with a single decision"
-        )
+            right, "Cultivation", "Choose your path and begin your training"
+        ) #"Focus begins with a single decision"
         control_card.pack(fill="x", pady=(0, 8))
 
         duration_frame = tk.Frame(control_content, bg=PANEL)
-        duration_frame.pack(fill="x", pady=(0, 8))
+        duration_frame.pack(fill="x", pady=(10, 8))
 
         tk.Label(
             duration_frame,
-            text="MISSION DURATION (MIN)",
+            text="CULTIVATION DURATION (MIN)",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 8, "bold")
@@ -1050,13 +1116,13 @@ class FocusTimer:
             btn.pack(side="left", expand=True, fill="x", padx=2)
             
         self.start_button = make_button(
-            control_content, "▶  BEGIN MISSION",
+            control_content, "▶  BEGIN CULTIVATION",
             self.start_session, GREEN
         )
-        self.start_button.pack(fill="x", pady=(0, 6))
+        self.start_button.pack(fill="x", pady=(10, 6))
 
         self.stop_button = make_button(
-            control_content, "■  ABANDON MISSION",
+            control_content, "■  END CULTIVATION",
             self.stop_session, RED
         )
         self.stop_button.pack(fill="x", pady=(0, 6))
@@ -1806,6 +1872,41 @@ class FocusTimer:
             and str(entry.get("date")).startswith(today.isoformat())
         ]
 
+        latest_bounties = {}
+
+        for entry in sorted(
+            (e for e in self.history if isinstance(e, dict)),
+            key=lambda e: str(e.get("date", ""))
+        ):
+            project = entry.get("project")
+
+            if project is not None:
+                latest_bounties[project] = entry
+
+        today_bounties = sum(
+            1 for entry in latest_bounties.values()
+            if entry.get("status") == "COMPLETED"
+            and str(entry.get("date", "")).startswith(today.isoformat())
+        )
+
+        today_sessions = sum(
+            1 for entry in today_entries
+            if entry.get("project") is None and entry.get("xp") > 0
+        )
+
+        today_focused = 0
+
+        for entry in today_entries:
+            duration = entry.get("duration", 0)
+
+            if isinstance(duration, str):
+                minutes, _, seconds = duration.partition("m ")
+                today_focused += int(minutes or 0) + (
+                    int(seconds.replace("s", "") or 0) / 60
+                )
+            else:
+                today_focused += int(duration or 0)
+                
         today_xp = sum(
             int(entry.get("xp", 0))
             for entry in today_entries
@@ -1831,25 +1932,26 @@ class FocusTimer:
         stats = tk.Frame(summary, bg="#242638")
         stats.pack(fill="x", padx=12, pady=(2, 10))
 
-        xp_frame = tk.Frame(stats, bg="#242638")
-        xp_frame.pack(side="left", fill="x", expand=True)
+        for value, subtitle, color in (
+            (f"{today_xp} XP", "EARNED TODAY", GOLD),
+            (str(today_bounties), "BOUNTIES COMPLETED", PURPLE),
+            (f"{int(today_focused)}m", "FOCUSED TODAY", "#6CCE91"),
+            (str(today_sessions), "CULTIVATION SESSIONS (≥ 1 MIN)", GREEN)
+        ):
+            frame = tk.Frame(stats, bg="#242638")
+            frame.pack(side="left", padx=(0, 25))
 
-        tk.Label(
-            xp_frame,
-            text=f"{today_xp} XP",
-            font=("Segoe UI", 20, "bold"),
-            fg="#e5b85c",
-            bg="#242638"
-        ).pack(anchor="w")
+            tk.Label(
+                frame, text=value,
+                font=("Segoe UI", 13, "bold"),
+                fg=color, bg="#242638"
+            ).pack(anchor="w")
 
-        tk.Label(
-            xp_frame,
-            text="EARNED TODAY",
-            font=("Segoe UI", 7, "bold"),
-            fg="#969caf",
-            bg="#242638"
-        ).pack(anchor="w")
-
+            tk.Label(
+                frame, text=subtitle,
+                font=("Segoe UI", 7),
+                fg=MUTED, bg="#242638"
+            ).pack(anchor="w")
         # ==============================
         # SEPARATOR
         # ==============================
@@ -2051,14 +2153,20 @@ class FocusTimer:
                 ).pack(side="left", fill="x", expand=True)
 
             # Date and duration
+            duration = entry.get("duration", 0)
+
+            duration_text = (
+                f"{duration}m" if duration >= 1
+                else None
+            ) if type(duration) == int else duration
+
             tk.Label(
                 top,
-                text=f"{entry.get('date', '—')}  ·  {entry.get('duration', '—')}",
+                text=f"{entry.get('date', '—')}  ·  {duration_text}" if duration_text is not None else f"{entry.get('date', '—')}",
                 font=("Segoe UI", 7),
                 fg="#aab0c0",
                 bg="#242638"
             ).pack(side="right", padx=(6, 0))
-
 
             # Bottom information row
             details = tk.Frame(card, bg="#242638")
@@ -2090,7 +2198,7 @@ class FocusTimer:
             xp = entry.get('xp', 0)
             tk.Label(
                 details,
-                text=f"✧  {"" if xp < 0 else "+"}{xp} XP",
+                text=f"✧  {"" if xp < 0 else "+" if xp > 0 else ""}{xp} XP",
                 font=("Segoe UI", 8, "bold"),
                 fg="#65cb91" if xp >= 0 else "#e57a5c",
                 bg="#303348",
@@ -2225,7 +2333,11 @@ class FocusTimer:
         )
 
         self.project_menu.focus_force()
-            
+    
+    # endregion 
+
+    # region ---------------- POPUPS ----------------
+
     def render_edit_mission_markdown_popup(self):
         popup = tk.Toplevel(self.root)
         popup.title(f"Quest Scroll Editor — {self.active_project}")
@@ -2444,6 +2556,7 @@ class FocusTimer:
                         "is_daily": is_daily,
                         "status": status,
                         "streak_count": streak,
+                        "reclaimable": True,
                         "previous_done_date": previous_done,
                         "last_done_date": last_done,
                         "completed_date": previous.get("completed_date")
@@ -3124,111 +3237,221 @@ class FocusTimer:
     
     def render_inspection_report_popup(self):
         popup = tk.Toplevel(self.root)
-        popup.title("Review")
+        popup.title("Cultivation Complete")
+        width, height = 700, 575
+        mwidth, mheight = 700, 310
 
-        # Custom draggable title bar
+        BG = "#171923"
+        PANEL = "#222738"
+        BORDER = "#34394b"
+        GOLD = "#F5C66A"
+        PURPLE = "#A78BFA"
+        MUTED = "#9CA9C5"
+        GREEN = "#6cce91"
+
+        # Calculate session duration
+        elapsed = (
+            min(self.duration, int(time.monotonic() - self.start_time))
+            if self.start_time is not None else 0
+        )
+
+        minutes, seconds = divmod(elapsed, 60)
+
+        focus_time = (
+            f"{minutes} min" if seconds < 30
+            else f"{minutes} min {seconds}s"
+        )
+
+        # Duration-based XP rewards
+        XP_REWARD = get_cultivation_session_reward(elapsed)
+        
+        # Custom title bar
         popup_container = self.create_custom_titlebar(
-            popup, 
+            popup,
             start_hidden=True
         )
 
+        # Main heading
         tk.Label(
             popup_container,
-            text="TIME'S UP!",
-            font=("Segoe UI", 21, "bold"),
-            fg="#6cce91",
-            bg="#171923"
-        ).pack(pady=(25, 8))
+            text="✦  CULTIVATION COMPLETE  ✦",
+            font=("Segoe UI", 19, "bold"),
+            fg=GOLD,
+            bg=BG
+        ).pack(pady=(22, 5))
 
         tk.Label(
             popup_container,
-            text="Did you finish what you wanted to build?",
-            font=("Segoe UI", 11),
+            text="Your efforts have strengthened your Dao." if elapsed > 60 else
+            "Your cultivation was too brief to earn XP. Try again!",
+            font=("Segoe UI", 9),
+            fg=MUTED,
+            bg=BG
+        ).pack(pady=(0, 18))
+
+        # Session statistics
+        stats = tk.Frame(popup_container, bg=BG)
+        stats.pack(fill="x", padx=35, pady=(0, 18))
+
+        stats.grid_columnconfigure(0, weight=1)
+        stats.grid_columnconfigure(1, weight=1)
+
+        def create_stat(parent, title, value, color):
+            card = tk.Frame(
+                parent,
+                bg=PANEL,
+                highlightbackground=BORDER,
+                highlightthickness=1
+            )
+
+            tk.Label(
+                card,
+                text=title.upper(),
+                font=("Segoe UI", 8, "bold"),
+                fg=MUTED,
+                bg=PANEL
+            ).pack(anchor="w", padx=12, pady=(10, 3))
+
+            tk.Label(
+                card,
+                text=value,
+                font=("Segoe UI", 17, "bold"),
+                fg=color,
+                bg=PANEL
+            ).pack(anchor="w", padx=12, pady=(0, 10))
+
+            return card
+
+        create_stat(
+            stats,
+            "Focus time",
+            focus_time,
+            PURPLE
+        ).grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+
+        create_stat(
+            stats,
+            "XP reward",
+            f"+{XP_REWARD} XP",
+            GOLD
+        ).grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+
+        # Question
+        tk.Label(
+            popup_container,
+            text="How did your cultivation go?",
+            font=("Segoe UI", 12, "bold"),
             fg="white",
-            bg="#171923",
-            wraplength=340
-        ).pack(pady=15)
+            bg=BG
+        ).pack(pady=(0, 3))
 
+        tk.Label(
+            popup_container,
+            text="Choose an honest assessment of your work.",
+            font=("Segoe UI", 8),
+            fg=MUTED,
+            bg=BG
+        ).pack(pady=(0, 12))
+
+        # Response colors
         colors = {
-            "YES!": "#6cce91",
-            "PARTIALLY": "#e8bb69",
+            "YES!": GREEN,
+            "PARTIALLY": GOLD,
             "NOT YET": "#8b9df5"
         }
 
+        descriptions = {
+            "YES!": "I accomplished my goal",
+            "PARTIALLY": "I made progress",
+            "NOT YET": "I'll try again"
+        }
+
         def respond(choice):
-            elapsed = min(self.duration, int(time.monotonic() - self.start_time)) if self.start_time is not None else 0
-            minutes, seconds = divmod(elapsed, 60)
             duration = f"{minutes}m {seconds}s"
-
-            if choice == "NOT YET":
-                xp_reward = SESSION_START_REWARD
-            else:
-                xp_reward = SESSION_RESULT_REWARD
-
             message = random.choice(REVIEW_RESPONSES[choice])
-            
+
             self.record_history(
-                title="Session finished.", 
+                title="Session finished.",
                 status={
-                    "YES!": "COMPLETED", 
-                    "PARTIALLY": "PARTIALLY COMPLETED", 
+                    "YES!": "COMPLETED",
+                    "PARTIALLY": "PARTIALLY COMPLETED",
                     "NOT YET": "SKIPPED"
-                }[choice], 
-                history_type="Session", 
+                }[choice],
+                history_type="Session",
                 duration=duration,
                 project=None,
-                xp_reward= xp_reward
+                xp_reward=XP_REWARD
             )
 
+            # Clear previous content
             for widget in popup_container.winfo_children():
                 widget.destroy()
-            
-            width, height = 900, 350
-            x = (popup.winfo_screenwidth() - width) // 2
-            y = (popup.winfo_screenheight() - height) // 2
-            popup.geometry(f"{width}x{height}+{x}+{y}")
-            
+
+            popup.update_idletasks()
+            self.center_geometry(popup, (mwidth, mheight))
+
+            # Completion screen
+            tk.Label(
+                popup_container,
+                text="✦  CULTIVATION COMPLETE  ✦",
+                font=("Segoe UI", 17, "bold"),
+                fg=GOLD,
+                bg=BG
+            ).pack(pady=(35, 12))
+
             tk.Label(
                 popup_container,
                 text=message,
-                font=("Segoe UI", 17, "bold"),
-                fg=colors[choice],
-                bg="#171923",
-                wraplength=800,
+                font=("Segoe UI", 10),
+                fg=MUTED,
+                bg=BG,
+                wraplength=400,
                 justify="center"
-            ).pack(expand=True, padx=25)
+            ).pack(padx=25, pady=12)
 
             tk.Button(
                 popup_container,
                 text="CONTINUE",
                 command=popup.destroy,
-                bg="#34394b",
-                fg="white",
+                bg=PANEL,
+                fg=GOLD,
+                activebackground="#34394b",
+                activeforeground=GOLD,
                 relief="flat",
                 font=("Segoe UI", 10, "bold"),
-                cursor="hand2"
-            ).pack(pady=20, ipadx=30, ipady=8)
-            
+                cursor="hand2",
+                bd=0
+            ).pack(pady=(18, 25), ipadx=30, ipady=8)
             self.overlay.withdraw()
 
-        buttons = tk.Frame(popup_container, bg="#171923")
-        buttons.pack(pady=(0, 20))
+        # Response buttons
+        buttons = tk.Frame(popup_container, bg=BG)
+        buttons.pack(fill="x", padx=35, pady=(0, 20))
 
         for choice in REVIEW_RESPONSES:
-            tk.Button(
+            button = tk.Button(
                 buttons,
-                text=choice,
+                text=f"{choice}   ·   {descriptions[choice]}",
                 font=("Segoe UI", 9, "bold"),
-                bg="#34394b",
-                fg="white",
+                bg=PANEL,
+                fg=colors[choice],
                 activebackground=colors[choice],
-                activeforeground="white",
+                activeforeground=BG,
                 relief="flat",
+                bd=0,
                 cursor="hand2",
-                command=lambda c=choice: respond(c)
-            ).pack(fill="x", padx=15, pady=5, ipadx=35, ipady=7)
+                command=lambda c=choice: respond(c),
+                anchor="w",
+                padx=15
+            )
 
-        self.adjust_popup_dimensions(popup, size=(500, 450), with_lift=True)
+            button.pack(fill="x", pady=3, ipady=7)
+
+        self.adjust_popup_dimensions(
+            popup,
+            size=(width, height),
+            with_lift=True
+        )
 
     def render_add_project_popup(self):
         popup = tk.Toplevel(self.root)
@@ -3834,7 +4057,7 @@ class FocusTimer:
     def position_overlay(self):
         self.overlay.update_idletasks()
 
-        width, height = 280, 130
+        width, height = 320, 130
 
         screen_width = self.overlay.winfo_screenwidth()
         screen_height = self.overlay.winfo_screenheight()
@@ -3962,17 +4185,71 @@ class FocusTimer:
         current_xp, requirement = self.calculate_progression()
         realm = self.get_realm()
 
+        # Current realm
+        self.rank_label.config(text=realm["name"].upper())
         self.level_label.config(text=f"LEVEL {self.level}")
-        self.rank_label.config(text=realm["name"])
         self.rank_description.config(text=realm["description"])
-        # self.rank_subtitle.config(text=realm["subtitle"])
-        self.xp_label.config(text=f"{current_xp:,} / {requirement:,} XP")
-        self.total_xp_label.config(text=f"{requirement - current_xp:,} XP remaining until your next breakthrough.")
-        self.xp_progress.configure(maximum=requirement)
+
+        # XP progress
+        percentage = (
+            min(100, current_xp / requirement * 100)
+            if requirement > 0 else 100
+        )
+
+        remaining = max(0, requirement - current_xp)
+
+        self.xp_label.config(
+            text=f"{current_xp:,} / {requirement:,} XP"
+        )
+
+        self.xp_percentage_label.config(
+            text=f"{percentage:.0f}%"
+        )
+
+        self.xp_progress.configure(
+            maximum=max(1, requirement)
+        )
         self.xp_progress["value"] = current_xp
 
-        self.dashboard_streak_card.config(text=f"🔥  {self.getting_started_streak} days")
-        self.dashboard_xp_card.config(text=f"✦  {self.xp} XP")
+        self.total_xp_label.config(
+            text=f"{remaining:,} XP to next level"
+        )
+
+        # Next cultivation realm
+        realms = REALMS
+
+        current_index = next(
+            (
+                i for i, r in enumerate(realms)
+                if r[2] == realm["name"]
+            ),
+            -1
+        )
+
+        if current_index >= 0 and current_index + 1 < len(realms):
+            next_realm = realms[current_index + 1]
+            self.next_realm_label.config(
+                text=f"✨  NEXT BREAKTHROUGH: {next_realm[2].upper()}"
+            )
+        else:
+            self.next_realm_label.config(
+                text="✨  HIGHEST CULTIVATION REALM ACHIEVED"
+            )
+
+        # Dashboard statistics
+        self.dashboard_streak_card.config(
+            text=f"🔥  {self.getting_started_streak} "
+                f"{'day' if self.getting_started_streak == 1 else 'days'}",
+        )
+
+        self.dashboard_xp_card.config(
+            text=f"✦  {self.xp} XP"
+        )
+
+        self.dashboard_bounty_card.config(
+            text=f"⚔  {self.total_completed_bounties} "
+                f"{'Bounty' if self.total_completed_bounties == 1 else 'Bounties'}"
+        )
 
     def award_xp(self, amount):
         old_level = self.level
@@ -4053,7 +4330,6 @@ class FocusTimer:
 
         # ---------- COMPLETE MISSION ----------
         if new_status == "completed":
-
             if is_daily:
                 last_done = mission.get("last_done_date")
                 streak = mission.get("streak_count", 0)
@@ -4104,6 +4380,7 @@ class FocusTimer:
 
                 mission["status"] = "completed"
                 mission["completed_date"] = today_str
+                self.total_completed_bounties += 1
 
             # Record completion
             self.record_history(
@@ -4134,22 +4411,27 @@ class FocusTimer:
                 )
                 return
 
-            # Reverse XP only when restoring a completed normal mission
             if (
                 not is_daily
                 and mission.get("status") == "completed"
                 and new_status == "current"
             ):
+                if mission.get("reclaimable", True) == False:
+                    reward = 0
+                
+                mission["completed_date"] = None
+                mission["reclaimable"] = True
+                self.total_completed_bounties -= 1
+
                 self.record_history(
                     mission.get('task'),
                     status="RECLAIMED",
                     history_type="Bounty",
                     project=self.active_project,
                     duration=mission.get("duration"),
-                    xp_reward=-reward
+                    xp_reward=-reward # Reverse XP
                 )
 
-                mission["completed_date"] = None
 
             mission["status"] = new_status
 
@@ -4167,6 +4449,7 @@ class FocusTimer:
         mission["streak_count"] = max(
             0, mission.get("streak_count", 0) - 1
         )
+        self.total_completed_bounties -= 1
 
         self.record_history(
             mission.get('task'),
@@ -4185,6 +4468,7 @@ class FocusTimer:
         mission["streak_count"] = 0
 
         if done_today:
+            self.total_completed_bounties -= 1
             self.record_history(
                 mission.get('task'),
                 status="RECLAIMED",
@@ -4318,7 +4602,7 @@ class FocusTimer:
         self.stop_button.config(state="normal")
         self.start_button.config(state="disabled")
         self.status_label.config(text="Session in progress...")
-        self.overlay_title.config(text="TASK IN PROGRESS...")
+        self.overlay_title.config(text="CULTIVATION IN PROGRESS...")
         self.overlay.deiconify()
         self.position_overlay()
         self.root.withdraw()
@@ -4488,6 +4772,7 @@ class FocusTimer:
     def save_data(self):
         data = {
             "xp": self.xp,
+            "total_completed_bounties": self.total_completed_bounties,
             "level": self.level,
             "history": self.history,
             "projects": self.projects,
@@ -4509,6 +4794,7 @@ class FocusTimer:
                 data = json.load(file)
 
             self.xp = max(0, int(data.get("xp", 0)))
+            self.total_completed_bounties = max(0, int(data.get("total_completed_bounties", 0)))
             self.calculate_progression()
 
             saved_projects = data.get("projects")
@@ -4541,17 +4827,20 @@ class FocusTimer:
     
     # region ---------------- TITLE BAR FOR POPUPS -----
     
-    def adjust_popup_dimensions(self, popup, size, with_lift=False):
-        popup.update_idletasks()
+    def center_geometry(self, popup : tk.Toplevel, size):
         width, height = size
-
         x = (popup.winfo_screenwidth() - width) // 2
         y = (popup.winfo_screenheight() - height) // 2
-
         popup.geometry(f"{width}x{height}+{x}+{y}")
+        
+    def adjust_popup_dimensions(self, popup : tk.Toplevel, size, with_lift=False):
+        popup.update_idletasks()
+        self.center_geometry(popup, size)
+
         if with_lift:
             popup.deiconify()
             popup.lift()
+
         popup.focus_force()
 
     def create_custom_titlebar(
@@ -4573,10 +4862,7 @@ class FocusTimer:
         if is_dialog: popup.grab_set()
 
         if fixed_size is not None:
-            width, height = fixed_size
-            x = (popup.winfo_screenwidth() - width) // 2
-            y = (popup.winfo_screenheight() - height) // 2
-            popup.geometry(f"{width}x{height}+{x}+{y}")
+            self.center_geometry(popup, fixed_size)
 
         # Outer border
         outer_border = tk.Frame(
@@ -4684,17 +4970,24 @@ class FocusTimer:
         def on_confirm():
             self.level = 0
             self.xp = 0
+            self.total_completed_bounties = 0
             self.getting_started_streak = 0
             self.last_getting_started = None
             self.history.clear()
+
+            new_completed_bounty_count = 0
             for rows in self.projects.values():
                  for row in rows:
-                     row.update({
-                         "status": "current",
-                         "streak_count": 0,
-                         "last_done_date": None,
-                         "previous_done_date": None
-                     })
+                    if row["status"] == "completed" and row["is_daily"] == False:
+                        new_completed_bounty_count += 1 
+                        row["reclaimable"] = False # XP of these bounties cannot be reclaimed
+                    else:
+                        row.update({
+                            "status": "current",
+                            "streak_count": 0,
+                            "last_done_date": None,
+                            "previous_done_date": None
+                        })
 
             self.save_data()
             self.render_mission_log()
