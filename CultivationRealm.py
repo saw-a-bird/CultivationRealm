@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, date, timedelta
 from collections import defaultdict
+from PIL import Image, ImageDraw
 import time
 import random
 import json
@@ -552,7 +553,6 @@ class FocusTimer:
             )
    
     def create_tray_image(self):
-        from PIL import Image, ImageDraw
 
         image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
@@ -3165,7 +3165,8 @@ class FocusTimer:
             else:
                 xp_reward = SESSION_RESULT_REWARD
 
-            message = random.choice(responses[choice])
+            message = random.choice(REVIEW_RESPONSES[choice])
+            
             self.record_history(
                 title="Session finished.", 
                 status={
