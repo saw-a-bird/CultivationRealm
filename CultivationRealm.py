@@ -254,13 +254,7 @@ class FocusTimer:
         self.level = 0
         self.total_completed_bounties = 0
 
-        if getattr(sys, "frozen", False):
-            app_folder = os.path.dirname(sys.executable)
-        else:
-            app_folder = os.path.dirname(os.path.abspath(__file__))
-
-        self.data_file = os.path.join(app_folder, "cultivation_data.json")
-
+        self.setup_data_folder()
         self.load_data()
         self.setup_styles()
         self.build_main()
@@ -4768,7 +4762,40 @@ class FocusTimer:
     # endregion
 
     # region ---------------- SAVE / LOAD ------------
-        
+    
+    def setup_data_folder(self):
+        app_data_folder = os.path.join(
+            os.environ["APPDATA"],
+            "CultivationRealm"
+        )
+
+        os.makedirs(app_data_folder, exist_ok=True)
+
+        self.data_file = os.path.join(
+            app_data_folder,
+            "cultivation_data.json"
+        )
+
+        if getattr(sys, "frozen", False):
+            app_folder = os.path.dirname(sys.executable)
+        else:
+            app_folder = os.path.dirname(os.path.abspath(__file__))
+
+        old_data_file = os.path.join(
+            app_folder,
+            "cultivation_data.json"
+        )
+
+        if (
+            os.path.isfile(old_data_file)
+            and not os.path.exists(self.data_file)
+        ):
+            try:
+                import shutil
+                shutil.copy2(old_data_file, self.data_file)
+            except OSError as error:
+                print(f"Could not migrate saved progress: {error}")
+
     def save_data(self):
         data = {
             "xp": self.xp,

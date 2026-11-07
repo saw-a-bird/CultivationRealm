@@ -1,0 +1,53 @@
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 64 64"
+    width="44"
+    height="44">
+
+    <defs>
+        <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="2" />
+        </filter>
+    </defs>
+
+
+    <!-- Subtle background glow -->
+    <circle
+        cx="32" cy="32" r="18"
+        fill="#E5B85C"
+        opacity="0.12"
+        filter="url(#softGlow)"
+    />
+
+    <!-- Ring glow -->
+    <circle
+        cx="32" cy="32" r="26"
+        fill="none"
+        stroke="#E5B85C"
+        stroke-width="3"
+        opacity="0.22"
+        filter="url(#softGlow)"
+    />
+
+    <!-- Original ring -->
+    <circle
+        cx="32" cy="32" r="26"
+        fill="none"
+        stroke="#E5B85C"
+        stroke-width="2"
+    />
+
+    <!-- Star glow -->
+    <path
+        d="M32 9 L37 26 L55 32 L37 38 L32 55 L27 38 L9 32 L27 26 Z"
+        fill="#E5B85C"
+        opacity="0.25"
+        filter="url(#softGlow)"
+    />
+
+    <!-- Original star -->
+    <path
+        d="M32 9 L37 26 L55 32 L37 38 L32 55 L27 38 L9 32 L27 26 Z"
+        fill="#E5B85C"
+    />
+</svg>
