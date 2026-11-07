@@ -140,15 +140,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
               throw "MSIX packaging failed."
           }
+            
+          # Verify generated package by unpacking it.
+          $verifyDir = Join-Path $env:RUNNER_TEMP "msix-verify"
 
-          # Validate generated package.
-          & $makeAppx.FullName validate /p $output
+          & $makeAppx.FullName unpack /p $output /d $verifyDir
 
           if ($LASTEXITCODE -ne 0) {
-              throw "MSIX validation failed."
+              throw "MSIX package verification failed."
           }
 
-          Write-Host "MSIX created successfully."
+          Write-Host "MSIX package verification succeeded."
 
       # Generate checksums.
       - name: Generate SHA256 checksums
