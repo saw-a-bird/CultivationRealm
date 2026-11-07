@@ -44,7 +44,7 @@ jobs:
 
       - name: Build executable
         run: |
-          python -m PyInstaller --clean --noconfirm --onefile --windowed --name CultivationRealm CultivationRealm.py
+          pyinstaller --clean --noconfirm --onefile --windowed --name CultivationRealm --icon=assets/CultivationRealm.ico CultivationRealm.py
 
       # Generate the MSIX version.
       - name: Determine package version
