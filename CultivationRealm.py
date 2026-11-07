@@ -207,6 +207,108 @@ REVIEW_RESPONSES = {
     ]
 }
 
+# -------------- TUTORIALS ---------------------------
+
+TUTORIALS_DICT = {
+    "onboarding": False,
+    "bountyboard": False,
+    "chronicles": False,
+    "minimize": False,
+    "first_session": False,
+    "bounty_creation": False,
+    "sect_creation": False,
+    "markdown_editor": False
+}
+
+TUTORIAL_MESSAGES = {
+    "onboarding": {
+        "title": "Welcome, Cultivator!",
+        "description": (
+            "Your cultivation journey begins here!\n\n"
+            "Establish your own Sects to organize your goals, "
+            "take on Bounties to challenge yourself, and earn XP "
+            "with every achievement.\n\n"
+            "Forge your own path, grow stronger with each step, "
+            "and build your legacy. Your journey to greatness "
+            "starts now. Are you ready?"
+        ),
+        "wrapsize": 500
+    },
+    "bountyboard": {
+        "title": "The Bounty Board",
+        "description": (
+            "Create your own Sects and add Bounties to them. "
+            "Track their progress, mark them as completed or postponed, "
+            "and keep an eye on your daily streaks."
+        ),
+        "wrapsize": 500
+    },
+    "chronicles": {
+        "title": "Your Chronicles",
+        "description": (
+            "Look back on your cultivation journey. "
+            "Your completed sessions and past achievements "
+            "are recorded here."
+        ),
+        "wrapsize": 500
+    },
+    "minimize": {
+        "title": "System Tray",
+        "description": (
+            "Minimizing the app doesn't close it! It simply "
+            "hides it while keeping it running in the background.\n\n"
+            "Look for the app's icon near your computer's clock. "
+            "Double-click it whenever you want to open the app again!"
+        ),
+        "wrapsize": 450
+    },
+    "first_session": {
+        "title": "Cultivation Overlay",
+        "description": (
+            "While a cultivation session is running, "
+            "you can click the overlay (in the bottom-right section of the screen) to open "
+            "the main application again."
+        ),
+        "wrapsize": 500
+    },
+    "bounty_creation": {
+        "title": "✦ Your First Bounty!",
+        "description": (
+            "Congratulations! You've created your first Bounty. "
+            "Your cultivation journey is officially underway!\n\n"
+            "Looking for your next challenge? Check the "
+            "recommended Bounties on the right side of your "
+            "Dashboard and start a cultivation session with "
+            "just one click.\n\n"
+            "Keep going, complete your Bounties, and grow stronger!"
+        ),
+        "wrapsize": 500
+    },
+    "sect_creation": {
+        "title": "✦ Your First Sect!",
+        "description": (
+            "Congratulations! You've established your first Sect. "
+            "Your cultivation journey is taking shape!\n\n"
+            "Sects help you organize your Bounties into different "
+            "groups, making it easier to manage your goals and "
+            "keep track of your progress.\n\n"
+            "Build your Sect, take on challenges, and forge your legacy!"
+        ),
+        "wrapsize": 500
+    },
+    "markdown_editor": {
+        "title": "✦ The Art of Quick Formatting!",
+        "description": (
+            "Want to create or edit multiple Bounties at once?\n\n"
+            "Meet your Markdown Editor! Use its simple text-based "
+            "format to organize your Bounties and import them all "
+            "in one go.\n\n"
+            "Just follow the example provided, and let the app "
+            "handle the rest!"
+        ),
+        "wrapsize": 600
+    }
+}
 
 # -------------- MAIN CLASS --------------------
 
@@ -217,7 +319,6 @@ class FocusTimer:
 
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
-        self.project_menu_open = False
 
         window_w = min(900, max(700, screen_w - 50))
         window_h = min(600, max(480, screen_h - 100))
@@ -236,11 +337,13 @@ class FocusTimer:
         # self.root.bind("<Map>", self.restore_custom_titlebar)
         # print("OK")
 
+        self.tutorials = TUTORIALS_DICT
         self.duration = 0
         self.start_time = None
         self.end_time = None
         self.running = False
         self.session_finished = False
+        self.chosen_bounty = None
 
         self.history = []
         self.mission_board = []
@@ -259,6 +362,7 @@ class FocusTimer:
         self.setup_styles()
         self.build_main()
         self.update_xp_display()
+        self.update_next_cultivation_display()
 
         # print("OK2.5")
         # self.selected_mission = None
@@ -272,6 +376,7 @@ class FocusTimer:
 
         self.show_window()
         # print("OK4")
+        
 
     # region ---------------- STYLES -------------------
         
@@ -528,6 +633,7 @@ class FocusTimer:
 
         self.overlay.deiconify()
         self.overlay.lift()
+        self.check_tutorial("minimize")
 
     def show_window(self, event=None):
         self.root.deiconify()
@@ -563,7 +669,14 @@ class FocusTimer:
                 lambda: self.root.overrideredirect(True)
                 if self.root.winfo_exists() else None
             )
-   
+
+    def bring_window_to_front(self):
+        if self.root.state() == "iconic":
+            return
+
+        self.root.lift()
+        self.root.focus_force()
+
     def create_tray_image(self):
 
         image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -634,59 +747,6 @@ class FocusTimer:
         self.root.configure(bg=BG)
         self.root.minsize(760, 560)
 
-        # ---------- HELPERS ----------
-        def make_card(parent, title, subtitle=None):
-            card = tk.Frame(
-                parent,
-                bg=PANEL,
-                highlightbackground=BORDER,
-                highlightthickness=1
-            )
-            heading = tk.Frame(card, bg=PANEL)
-            heading.pack(fill="x", padx=12, pady=(10, 5))
-
-            tk.Label(
-                heading,
-                text=title.upper(),
-                bg=PANEL,
-                fg=GOLD,
-                font=("Segoe UI", 9, "bold")
-            ).pack(anchor="w")
-
-            if subtitle:
-                tk.Label(
-                    heading,
-                    text=subtitle,
-                    bg=PANEL,
-                    fg=MUTED,
-                    font=("Segoe UI", 8)
-                ).pack(anchor="w", pady=(2, 0))
-
-            content = tk.Frame(card, bg=PANEL)
-            content.pack(fill="both", expand=True, padx=12, pady=(4, 12))
-            return card, content
-
-        def make_button(parent, label, command, bg=PURPLE, fg = "#11131A", compact=False):
-            return tk.Button(
-                parent,
-                text=label,
-                command=command,
-                bg=bg,
-                fg=fg,
-                activebackground=TEXT,
-                activeforeground=BG,
-                relief="flat",
-                bd=0,
-                cursor="hand2",
-                font=("Segoe UI", 8 if compact else 9, "bold"),
-                padx=10 if compact else 14,
-                pady=5 if compact else 8
-            )
-
-        def add_hover(widget, normal, hover):
-            widget.bind("<Enter>", lambda e: widget.configure(bg=hover))
-            widget.bind("<Leave>", lambda e: widget.configure(bg=normal))
-
         # ---------- HEADER ----------
         header = tk.Frame(self.root, bg=BG)
         header.pack(fill="x", padx=18, pady=(12, 8))
@@ -734,12 +794,34 @@ class FocusTimer:
         notebook.add(dashboard_tab, text="  ✦ DASHBOARD  ")
         notebook.add(bounty_tab, text="  ⚔ BOUNTY BOARD  ")
         notebook.add(chronicle_tab, text="  📜 CHRONICLE  ")
+        
+        # Track tutorials already triggered this session
+        self.visited_tutorial_tabs = set()
 
+        def on_tab_changed(event=None):
+            selected_tab = notebook.index(notebook.select())
+
+            tutorial_map = {
+                0: "onboarding",
+                1: "bountyboard",
+                2: "chronicles"
+            }
+
+            tutorial_key = tutorial_map.get(selected_tab)
+
+            if tutorial_key and tutorial_key not in self.visited_tutorial_tabs:
+                self.visited_tutorial_tabs.add(tutorial_key)
+                self.check_tutorial(tutorial_key)
+
+        notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
+
+        # Show onboarding when Dashboard is first opened
+        self.root.after(100, lambda: on_tab_changed())
         # ==========================================================
         # region DASHBOARD TAB
         # ==========================================================
-        dashboard_tab.columnconfigure(0, weight=1)
-        dashboard_tab.columnconfigure(1, weight=1)
+        dashboard_tab.columnconfigure(0, weight=6, uniform="dashboard")
+        dashboard_tab.columnconfigure(1, weight=4, uniform="dashboard")
         dashboard_tab.rowconfigure(0, weight=1)
 
         left = tk.Frame(dashboard_tab, bg=BG)
@@ -749,7 +831,7 @@ class FocusTimer:
         right.grid(row=0, column=1, sticky="nsew", padx=(5, 8), pady=8)
 
         # Cultivation rank
-        rank_card, rank_content = make_card(
+        rank_card, rank_content = self.make_card(
             left, "Cultivation Realm", "Your current path to mastery"
         )
         rank_card.pack(fill="x", pady=(0, 8))
@@ -866,7 +948,7 @@ class FocusTimer:
         stats_frame.columnconfigure(2, weight=1)
 
         # DAILY STREAK
-        streak_card, streak_content = make_card(
+        streak_card, streak_content = self.make_card(
             stats_frame, "Daily Streak", "Consistency"
         )
         streak_card.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
@@ -883,7 +965,7 @@ class FocusTimer:
         self.dashboard_streak_card.pack(anchor="w")
 
         # LIFETIME XP
-        lifetime_card, lifetime_content = make_card(
+        lifetime_card, lifetime_content = self.make_card(
             stats_frame, "Lifetime XP", "Total earned"
         )
         lifetime_card.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
@@ -899,7 +981,7 @@ class FocusTimer:
         self.dashboard_xp_card.pack(anchor="w")
 
         # TOTAL BOUNTIES
-        total_bounties_card, total_bounties_content = make_card(
+        total_bounties_card, total_bounties_content = self.make_card(
             stats_frame, "Bounties Completed", "Total victories"
         )
         total_bounties_card.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
@@ -918,30 +1000,76 @@ class FocusTimer:
         # endregion
 
         # region ---------- COMPACT MISSION CREATION ----------
-        task_card, task_content = make_card(
+        task_card, task_content = self.make_card(
             left, "New Bounty", "Prepare your next cultivation session"
         )
         task_card.pack(fill="x", pady=(0, 8))
+        # region Bounty name + Sect picker
 
-        # Mission name
+        bounty_name_row = tk.Frame(task_content, bg=PANEL)
+        bounty_name_row.pack(fill="x", pady=(3, 8))
+
+        # Sect field (left)
+        sect_field = tk.Frame(bounty_name_row, bg=PANEL)
+        sect_field.pack(side="left", padx=(0, 10))
+
         tk.Label(
-            task_content,
-            text="BOUNTY NAME",
-            bg=PANEL, fg=MUTED,
-            font=("Segoe UI", 8, "bold")
-        ).pack(anchor="w")
+            sect_field,
+            text="ASSIGN TO SECT",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 8, "bold"),
+            anchor="w"
+        ).pack(anchor="w", pady=(0, 5))
 
-        self.task_var = getattr(self, "task_var", tk.StringVar())
+        self.bounty_project_var = tk.StringVar(value=self.active_project)
+
+        (
+            self.bounty_project_picker,
+            self.bounty_project_label,
+            self.bounty_project_arrow
+        ) = self.create_custom_dropdown(
+            parent=sect_field,
+            variable=self.bounty_project_var,
+            values=lambda: list(self.projects.keys()),
+            menu_attr="bounty_project_menu",
+            width=12
+        )
+
+        # Bounty name field (right)
+        name_field = tk.Frame(bounty_name_row, bg=PANEL)
+        name_field.pack(side="left", fill="x", expand=True)
+
+        tk.Label(
+            name_field,
+            text="BOUNTY NAME",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 8, "bold"),
+            anchor="w"
+        ).pack(anchor="w", pady=(0, 5))
+
+        self.task_var = getattr(
+            self, "task_var", tk.StringVar()
+        )
+        entry_container = tk.Frame(name_field, bg=PANEL_ALT)
+        entry_container.pack(fill="x")
 
         self.task_entry = tk.Entry(
-            task_content,
+            entry_container,
             textvariable=self.task_var,
-            bg=PANEL_ALT, fg=TEXT,
+            bg=PANEL_ALT,
+            fg=TEXT,
             insertbackground=TEXT,
             relief="flat",
             font=("Segoe UI", 9)
         )
-        self.task_entry.pack(fill="x", pady=(3, 8), ipady=4)
+        self.task_entry.pack(
+            fill="x",
+            padx=(10, 10),
+            ipady=6
+        )
+        # endregion
 
         # Duration and reward side by side
         fields = tk.Frame(task_content, bg=PANEL)
@@ -954,26 +1082,34 @@ class FocusTimer:
         duration_frame = tk.Frame(fields, bg=PANEL)
         duration_frame.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 
-        tk.Label(
+        duration_label = tk.Label(
             duration_frame,
             text="DURATION (MIN)",
             bg=PANEL, fg=MUTED,
             font=("Segoe UI", 7, "bold")
-        ).pack(anchor="w")
+        )
+        duration_label.pack(anchor="w")
 
         self.minutes_var = getattr(
             self, "minutes_var", tk.StringVar(value="25")
         )
 
+        entry_duration_container = tk.Frame(duration_frame, bg=PANEL_ALT)
+        entry_duration_container.pack(fill="x")
+
         self.minutes_entry = tk.Entry(
-            duration_frame,
+            entry_duration_container,
             textvariable=self.minutes_var,
             bg=PANEL_ALT, fg=TEXT,
             insertbackground=TEXT,
             relief="flat",
             font=("Segoe UI", 9)
         )
-        self.minutes_entry.pack(fill="x", pady=(3, 0), ipady=4)
+        self.minutes_entry.pack(
+            fill="x",
+            padx=(10, 10),
+            ipady=6
+        )
 
         # XP reward
         reward_frame = tk.Frame(fields, bg=PANEL)
@@ -990,15 +1126,22 @@ class FocusTimer:
             self, "reward_var", tk.StringVar(value="50")
         )
 
+        entry_reward_container = tk.Frame(reward_frame, bg=PANEL_ALT)
+        entry_reward_container.pack(fill="x")
+
         self.reward_entry = tk.Entry(
-            reward_frame,
+            entry_reward_container,
             textvariable=self.reward_var,
             bg=PANEL_ALT, fg=GOLD,
             insertbackground=TEXT,
             relief="flat",
             font=("Segoe UI", 9)
         )
-        self.reward_entry.pack(fill="x", pady=(3, 0), ipady=4)
+        self.reward_entry.pack(
+            fill="x",
+            padx=(10, 10),
+            ipady=6
+        )
 
         # Daily checkbox and quick duration presets
         bottom_row = tk.Frame(task_content, bg=PANEL)
@@ -1028,7 +1171,7 @@ class FocusTimer:
         presets.pack(side="right")
 
         for duration in (25, 45, 60, 90):
-            btn = make_button(
+            btn = self.make_button(
                 presets,
                 str(duration),
                 lambda d=duration: self.minutes_var.set(str(d)),
@@ -1044,7 +1187,7 @@ class FocusTimer:
             btn.pack(side="left", padx=(3, 0))
 
         # Post bounty
-        make_button(
+        self.make_button(
             task_content,
             "✦ POST BOUNTY",
             self.add_mission,
@@ -1054,9 +1197,35 @@ class FocusTimer:
         
         # endregion 
 
+        # region Next Cultivation - Featured Bounty
+        self.next_cultivation_frame = tk.Frame(
+            right,
+            bg="#211F38",
+            highlightbackground="#8B6CF6",
+            highlightthickness=1
+        )
+        self.next_cultivation_frame.pack(fill="x", pady=(0, 10))
+
+        accent = tk.Frame(
+            self.next_cultivation_frame,
+            bg="#8B6CF6",
+            height=3
+        )
+        accent.pack(fill="x")
+        accent.pack_propagate(False)
+
+        self.next_cultivation_bounty_content = tk.Frame(
+            self.next_cultivation_frame,
+            bg="#211F38",
+            padx=13,
+            pady=11
+        )
+        self.next_cultivation_bounty_content.pack(fill="x")
+
+        # endregion
+
         # region Mission controls
-        
-        control_card, control_content = make_card(
+        control_card, control_content = self.make_card(
             right, "Cultivation", "Choose your path and begin your training"
         ) #"Focus begins with a single decision"
         control_card.pack(fill="x", pady=(0, 8))
@@ -1076,8 +1245,11 @@ class FocusTimer:
             self, "control_minutes_var", tk.StringVar(value="25")
         )
 
+        control_minutes_container = tk.Frame(duration_frame, bg=PANEL_ALT)
+        control_minutes_container.pack(fill="x")
+
         self.control_minutes_entry = tk.Entry(
-            duration_frame,
+            control_minutes_container,
             textvariable=self.control_minutes_var,
             bg=PANEL_ALT,
             fg=TEXT,
@@ -1085,8 +1257,11 @@ class FocusTimer:
             relief="flat",
             font=("Segoe UI", 9)
         )
+        
         self.control_minutes_entry.pack(
-            fill="x", pady=(3, 5), ipady=4
+            fill="x",
+            padx=(10, 10),
+            ipady=6
         )
 
         # Quick duration presets
@@ -1094,7 +1269,7 @@ class FocusTimer:
         duration_presets.pack(fill="x")
 
         for duration in (5, 10, 25, 30, 45):
-            btn = make_button(
+            btn = self.make_button(
                 duration_presets,
                 f"{duration}m",
                 lambda d=duration: self.control_minutes_var.set(str(d)),
@@ -1109,19 +1284,19 @@ class FocusTimer:
             )
             btn.pack(side="left", expand=True, fill="x", padx=2)
             
-        self.start_button = make_button(
+        self.start_button = self.make_button(
             control_content, "▶  BEGIN CULTIVATION",
             self.start_session, GREEN
         )
         self.start_button.pack(fill="x", pady=(10, 6))
 
-        self.stop_button = make_button(
+        self.stop_button = self.make_button(
             control_content, "■  END CULTIVATION",
             self.stop_session, RED
         )
         self.stop_button.pack(fill="x", pady=(0, 6))
 
-        self.hide_button = make_button(
+        self.hide_button = self.make_button(
             control_content, "MINIMIZE",
             self.minimize_window,
             PANEL_ALT
@@ -1309,64 +1484,26 @@ class FocusTimer:
         actions.grid(row=2, column=0, sticky="ew", padx=12, pady=(4, 12))
 
         self.project_var = tk.StringVar(value=self.active_project)
-        self.project_picker = tk.Frame(
-            actions,
-            bg="#222A3D",
-            highlightbackground="#303A52",
-            highlightthickness=1,
-            cursor="hand2"
-        )
 
-        self.project_picker.pack(side="left", padx=(0, 6))
-
-        self.project_label = tk.Label(
-            self.project_picker,
-            textvariable=self.project_var,
-            bg="#222A3D",
-            fg="#E8EAF2",
-            font=("Segoe UI", 9),
-            padx=10,
-            pady=6,
-            cursor="hand2"
-        )
-        self.project_label.pack(side="left")
-        self.project_arrow = tk.Label(
-            self.project_picker,
-            text="▾",
-            bg="#222A3D",
-            fg="#929BB2",
-            font=("Segoe UI Symbol", 10),
-            padx=9,
-            pady=5,
-            cursor="hand2"
-        )
-        self.project_arrow.pack(side="left")
-
-        # Click handling
-        for widget in (
+        (
             self.project_picker,
             self.project_label,
             self.project_arrow
-        ):
-            widget.bind("<Button-1>", self.render_show_project_menu)
-
-            widget.bind(
-                "<Enter>",
-                lambda e: self.project_picker.config(bg="#303A52")
-            )
-
-            widget.bind(
-                "<Leave>",
-                lambda e: self.project_picker.config(bg="#222A3D")
-            )
-
-        make_button(
+        ) = self.create_custom_dropdown(
+            parent=actions,
+            variable=self.project_var,
+            values=lambda: list(self.projects.keys()),
+            on_select=self.change_project,
+            menu_attr="project_menu"
+        )
+        
+        self.make_button(
             actions, "+ SECT", self.render_add_project_popup,
             PANEL, fg=TEXT, compact=True
         ).pack(side="left", padx=3)
 
-        make_button(
-            actions, "EDIT NOTES", self.render_edit_mission_markdown_popup,
+        self.make_button(
+            actions, "EDIT BOUNTIES", self.render_edit_mission_markdown_popup,
             PANEL, fg=TEXT, compact=True
         ).pack(side="left", padx=3)
 
@@ -1378,7 +1515,7 @@ class FocusTimer:
         chronicle_tab.rowconfigure(0, weight=1)
         chronicle_tab.columnconfigure(0, weight=1)
 
-        chronicle_card, chronicle_content = make_card(
+        chronicle_card, chronicle_content = self.make_card(
             chronicle_tab,
             "Cultivation Chronicle",
             "A record of your completed sessions and progress"
@@ -1507,7 +1644,7 @@ class FocusTimer:
 
     def render_mission_board(self, reset=False):
         self.refresh_project_picker()
-        today_str = date.today().isoformat()
+        self.update_next_cultivation_display()
         scroll_positions = {}
 
         for status, container in self.mission_rows.items():
@@ -1522,31 +1659,7 @@ class FocusTimer:
             for child in container.winfo_children():
                 child.destroy()
 
-        missions = self.current_missions()
-        grouped = {
-            "current": [],
-            "completed": [],
-            "postponed": []
-        }
-
-        for item in missions:
-            status = item.get("status", "current").lower()
-
-            if status not in grouped:
-                status = "current"
-
-            is_daily = item.get("is_daily", False)
-            last_done = item.get("last_done_date")
-            streak = item.get("streak_count", 0)
-
-            done_today = (
-                is_daily and last_done == today_str
-            )
-
-            if done_today:
-                status = "completed"
-
-            grouped[status].append(item)
+        grouped, today_str = self.current_grouped_missions()
 
         # Render columns
         for status, container in self.mission_rows.items():
@@ -2200,146 +2313,19 @@ class FocusTimer:
                 pady=3
             ).pack(side="right")
 
-    def render_show_project_menu(self, event=None):
-        if self.project_menu_open:
-            self.project_menu.destroy()
-            self.project_menu_open = False
-            return
-        
-        self.project_menu_open = True
-
-        projects = self.project_picker["values"] if hasattr(
-            self.project_picker, "values"
-        ) else getattr(self, "projects", [])
-
-        self.project_menu = tk.Toplevel(self.root)
-        self.project_menu.overrideredirect(True)
-        self.project_menu.configure(bg="#303A52")
-
-        # Position below picker
-        self.project_menu.update_idletasks()
-
-        x = self.project_picker.winfo_rootx()
-        picker_y = self.project_picker.winfo_rooty()
-        picker_height = self.project_picker.winfo_height()
-
-        menu_height = self.project_menu.winfo_reqheight()
-
-        screen_height = self.root.winfo_screenheight()
-
-        gap = 30
-
-        space_below = screen_height - (picker_y + picker_height)
-        space_above = picker_y
-
-        if space_below >= menu_height + gap:
-            # Open downward
-            y = picker_y + picker_height + gap
-
-        elif space_above >= menu_height + gap:
-            # Open upward
-            y = picker_y - menu_height - gap
-
-        else:
-            # Not enough room: prioritize keeping the picker visible
-            y = max(0, min(
-                picker_y - menu_height - gap,
-                screen_height - menu_height
-            ))
-
-        self.project_menu.geometry(f"+{x}+{y}")
-
-        container = tk.Frame(
-            self.project_menu,
-            bg="#1A2030",
-            highlightbackground="#303A52",
-            highlightthickness=1
-        )
-        container.pack()
-
-        for project in projects:
-
-            selected = project == self.project_var.get()
-
-            item = tk.Label(
-                container,
-                text=f"{'✦  ' if selected else '    '}{project}",
-                bg="#222A3D" if selected else "#1A2030",
-                fg="#A78BFA" if selected else "#E8EAF2",
-                font=("Segoe UI", 9),
-                anchor="w",
-                padx=12,
-                pady=8,
-                width=19,
-                cursor="hand2"
-            )
-            item.pack(fill="x")
-
-            def select_project(value=project):
-                self.project_menu_open = False
-                self.project_menu.destroy()
-                if self.project_var.get() != value:
-                    self.project_var.set(value)
-                    self.change_project()
-
-            item.bind(
-                "<Button-1>",
-                lambda e, value=project: select_project(value)
-            )
-
-            item.bind(
-                "<Enter>",
-                lambda e, w=item: w.config(bg="#303A52")
-            )
-
-            item.bind(
-                "<Leave>",
-                lambda e, w=item, s=selected: w.config(
-                    bg="#222A3D" if s else "#1A2030"
-                )
-            )
-
-        def close_project_menu(event=None):
-
-            if not self.project_menu_open:
-                return
-
-            # Identify the widget currently under the mouse
-            clicked_widget = self.root.winfo_containing(
-                self.root.winfo_pointerx(),
-                self.root.winfo_pointery()
-            )
-
-            # Ignore clicks on the project picker
-            if clicked_widget in (
-                self.project_picker,
-                self.project_label,
-                self.project_arrow
-            ):
-                return
-
-            self.project_menu_open = False
-            self.project_menu.destroy()
-
-        self.project_menu.bind(
-            "<FocusOut>",
-            lambda e: close_project_menu(e)
-        )
-
-        self.project_menu.focus_force()
-    
     # endregion 
 
     # region ---------------- POPUPS ----------------
 
     def render_edit_mission_markdown_popup(self):
+        if self.running and self.chosen_bounty is not None:
+            self.error_cannot_edit_bounties()
+            return
+        
         popup = tk.Toplevel(self.root)
         popup.title(f"Quest Scroll Editor — {self.active_project}")
-
-        width, height = 880, 900
-        x = (popup.winfo_screenwidth() - width) // 2
-        y = (popup.winfo_screenheight() - height) // 2
-        popup.geometry(f"{width}x{height}+{x}+{y}")
+        
+        self.center_geometry(popup, (900, 900))
 
         popup.configure(bg="#171923")
         popup.transient(self.root)
@@ -2353,21 +2339,47 @@ class FocusTimer:
             font=("Segoe UI", 14, "bold")
         ).pack(anchor="w", padx=16, pady=(14, 4))
 
-        tk.Label(
+        example_format_text = (
+            "- Bounty Name | 30m | 50xp | daily | current | 3 | "
+            "2026-11-03 | 2026-11-04"
+        )
+        
+        format_label =tk.Label(
             popup,
             text=(
-                "Format:\n"
-                "- Mission | 30m | 50xp | daily | current | 3 | 2026-11-03 | 2026-11-04\n\n"
-                "Fields: name | duration | reward | daily | status | streak | previous_done_date | last_done_date\n"
+                "Format (Double-click to copy example):\n"
+                f"{example_format_text}\n\n"
+                "Fields: name | duration | reward | daily/not_daily | status | streak | previous_completed_date | completed_date\n"
                 "Status: current, completed, postponed\n"
-                "Use none if the mission has no last completion date or no previous completion date (for streaks)."
+                "Use none if the mission has no last completion date or no previous completion date (for streaks).\n"
             ),
             bg="#171923",
             fg="#aab0c0",
             font=("Segoe UI", 9),
             justify="left"
-        ).pack(anchor="w", padx=16, pady=(0, 10))
+        )
+        format_label.pack(anchor="w", padx=16, pady=(0, 10))
 
+        def copy_bounty_format(event=None):
+            popup.clipboard_clear()
+            popup.clipboard_append(example_format_text)
+            popup.update()
+
+            # Small confirmation
+            notification = tk.Label(
+                popup,
+                text="✓  Example copied to clipboard!",
+                bg="#193B35",
+                fg="#6EE7B7",
+                font=("Segoe UI", 8, "bold"),
+                padx=10,
+                pady=5
+            )
+            notification.pack(anchor="w", padx=16, pady=(0, 10))
+            notification.after(1800, notification.destroy)
+
+        format_label.bind("<Double-Button-1>", copy_bounty_format)
+        
         editor_frame = tk.Frame(popup, bg="#171923")
         editor_frame.pack(
             fill="both",
@@ -2418,15 +2430,17 @@ class FocusTimer:
                 task = mission.get("task", "Untitled quest")
                 duration = mission.get("duration", 45)
                 reward = mission.get("reward_xp", 0)
-                daily = "daily" if mission.get("is_daily", False) else "not_daily"
+                is_daily = mission.get("is_daily", False)
+                daily = "daily" if is_daily else "not_daily"
                 status = mission.get("status", "current")
                 streak = mission.get("streak_count", 0)
                 previous_done = mission.get("previous_done_date") or "none"
                 last_done = mission.get("last_done_date") or "none"
+                completed_date = mission.get("completed_date") or "none"
 
                 lines.append(
                     f"- {task} | {duration}m | {reward}xp | "
-                    f"{daily} | {status} | {streak} | {previous_done} | {last_done}"
+                    f"{daily} | {status} | {streak} | {previous_done} | {last_done if is_daily else completed_date}"
                 )
 
             lines.append("")
@@ -2435,7 +2449,7 @@ class FocusTimer:
 
         def apply_markdown():
             parsed_projects = {}
-            current_project = None
+            current_project = "General"
 
             try:
                 for raw in editor.get("1.0", "end-1c").splitlines():
@@ -2447,18 +2461,15 @@ class FocusTimer:
                     if line.startswith("#"):
                         current_project = line.lstrip("#").strip()
 
-                        if current_project:
-                            parsed_projects.setdefault(current_project, [])
-
+                        # Allow empty sects
+                        parsed_projects.setdefault(current_project, [])
                         continue
-
-                    if current_project is None:
-                        raise ValueError(
-                            "Add a project heading using # Project Name."
-                        )
 
                     if line.startswith(("- ", "* ")):
                         line = line[2:].strip()
+
+                    # Allow bounties without a sect
+                    parsed_projects.setdefault(current_project, [])
 
                     parts = [part.strip() for part in line.split("|")]
 
@@ -2522,12 +2533,12 @@ class FocusTimer:
 
                     if not 1 <= duration <= 1440:
                         raise ValueError(
-                            f"Invalid duration for mission: {task} - {duration}"
+                            f"Invalid duration for bounty: {task} - {duration}"
                         )
 
                     if reward < 0:
                         raise ValueError(
-                            f"Invalid XP reward for mission: {task} - {reward}"
+                            f"Invalid XP reward for bounty: {task} - {reward}"
                         )
 
                     if streak < 0:
@@ -2549,26 +2560,19 @@ class FocusTimer:
                         "reward_xp": reward,
                         "is_daily": is_daily,
                         "status": status,
-                        "streak_count": streak,
+                        "streak_count": 0,
+                        
                         "reclaimable": True,
-                        "previous_done_date": previous_done,
-                        "last_done_date": last_done,
-                        "completed_date": previous.get("completed_date")
+                        "previous_done_date": previous_done if is_daily else None,
+                        "last_done_date": last_done if is_daily else None,
+                        "completed_date": last_done if not is_daily else None
                     }
                     # print(mission)
 
                     parsed_projects[current_project].append(mission)
 
                 if not parsed_projects:
-                    raise ValueError(
-                        "You need at least one project and mission."
-                    )
-
-                for project, missions in parsed_projects.items():
-                    if not missions:
-                        raise ValueError(
-                            f"Project '{project}' needs at least one mission."
-                        )
+                    parsed_projects["General"] = []
 
             except (ValueError, TypeError) as error:
                 messagebox.showerror(
@@ -2604,8 +2608,13 @@ class FocusTimer:
             font=("Segoe UI", 9, "bold"),
             cursor="hand2"
         ).pack(pady=(0, 13), ipadx=15, ipady=7)
-    
+        
+        self.check_tutorial("markdown_editor")
+        popup.grab_set()
+        popup.wait_window()
+
     def render_level_up_popup(self, breakthrough=False):
+
         bg = "#171923"
         gold = "#e8bb69"
         purple = "#b9a3ff"
@@ -2801,7 +2810,7 @@ class FocusTimer:
         button = tk.Button(
             content,
             text="CONTINUE CULTIVATING",
-            command=popup.destroy,
+            command=lambda: self.close_custom_popup(popup),
             font=("Segoe UI", 10, "bold"),
             bg="#6c63ff",
             fg="white",
@@ -2820,6 +2829,7 @@ class FocusTimer:
             self.effect_shake(popup, width, height)
 
         self.adjust_popup_dimensions(popup, size=(width, height), with_lift=True)
+        popup.wait_window()
 
     def render_streak_continues_popup(self, bonus, on_continue):
         popup = tk.Toplevel(self.root)
@@ -3363,7 +3373,7 @@ class FocusTimer:
         def respond(choice):
             duration = f"{minutes}m {seconds}s"
             message = random.choice(REVIEW_RESPONSES[choice])
-
+            
             self.record_history(
                 title="Session finished.",
                 status={
@@ -3406,7 +3416,7 @@ class FocusTimer:
             tk.Button(
                 popup_container,
                 text="CONTINUE",
-                command=popup.destroy,
+                command=lambda: self.close_custom_popup(popup),
                 bg=PANEL,
                 fg=GOLD,
                 activebackground="#34394b",
@@ -3417,6 +3427,17 @@ class FocusTimer:
                 bd=0
             ).pack(pady=(18, 25), ipadx=30, ipady=8)
             self.overlay.withdraw()
+
+            if self.chosen_bounty is not None:
+                if choice == "YES!":
+                    self.change_mission_status(
+                            self.chosen_bounty, "completed"
+                    )
+                self.chosen_bounty = None
+
+            popup.grab_set()
+            popup.lift()
+            popup.focus_force()
 
         # Response buttons
         buttons = tk.Frame(popup_container, bg=BG)
@@ -3447,7 +3468,14 @@ class FocusTimer:
             with_lift=True
         )
 
+        popup.wait_window()
+        self.bring_window_to_front()
+
     def render_add_project_popup(self):
+        if self.running and self.chosen_bounty is not None:
+            self.error_cannot_edit_bounties()
+            return
+        
         popup = tk.Toplevel(self.root)
         popup.title("Found a New Sect")
         
@@ -3461,8 +3489,29 @@ class FocusTimer:
         tk.Label(popup_container, text="NAME YOUR SECT", bg="#171923", fg="#e5b85c", font=("Segoe UI", 10, "bold")).pack(pady=(18, 8))
 
         name_var = tk.StringVar()
-        entry = tk.Entry(popup_container, textvariable=name_var, bg="#252a3a", fg="white", insertbackground="white", relief="flat", font=("Segoe UI", 10))
-        entry.pack(fill="x", padx=22, ipady=7)
+        
+        # control_minutes_container = tk.Frame(popup_container, bg=PANEL_ALT)
+        # control_minutes_container.pack(fill="x")
+
+        entry_container = tk.Frame(popup_container, bg="#252a3a")
+        entry_container.pack(fill="x", padx=22)
+
+        entry = tk.Entry(
+            entry_container,
+            textvariable=name_var,
+            bg="#252a3a",
+            fg="white",
+            insertbackground="white",
+            relief="flat",
+            font=("Segoe UI", 10)
+        )
+        entry.pack(fill="x", padx=10, ipady=7)
+        
+        # entry.pack(
+        #     fill="x",
+        #     padx=22,
+        #     ipady=7
+        # )
 
         def create():
             name = name_var.get().strip()
@@ -3471,8 +3520,9 @@ class FocusTimer:
             
             self.create_project(name)
             popup.destroy()
+            self.check_tutorial("sect_creation")
 
-        tk.Button(popup_container, text="CREATE SECT", command=create, bg="#7668e8", fg="white", relief="flat", font=("Segoe UI", 9, "bold")).pack(pady=12, ipadx=12, ipady=5)
+        tk.Button(popup_container, text="JOIN SECT", command=create, bg="#7668e8", fg="white", relief="flat", font=("Segoe UI", 9, "bold")).pack(pady=12, ipadx=12, ipady=5)
 
         entry.focus_set()
         self.adjust_popup_dimensions(popup, (340, 200), with_lift=True)
@@ -3700,7 +3750,7 @@ class FocusTimer:
         # Display popup
         popup.wait_window()
 
-    def render_message_popup(self, title, description):
+    def render_message_popup(self, title, description, wrapsize=350, is_welcome=False):
         popup = tk.Toplevel(self.root)
 
         # Custom draggable title bar
@@ -3709,15 +3759,46 @@ class FocusTimer:
             start_hidden=True
         )
 
-        # Icon
-        tk.Label(
+     # Icon container (fixed dimensions)
+        icon_container = tk.Frame(
             popup_container,
+            bg="#171923",
+            width=60,
+            height=55
+        )
+        icon_container.pack(pady=(15, 10))
+        icon_container.pack_propagate(False)
+
+        # Animated star
+        star = tk.Label(
+            icon_container,
             text="✦",
             bg="#171923",
             fg="#E5B85C",
             font=("Segoe UI", 25, "bold")
-        ).pack(pady=(15, 2))
+        )
+        star.place(relx=0.5, rely=0.5, anchor="center")
 
+        if is_welcome:
+            glow_colors = [
+                "#C99B45", "#DDB45E", "#E5B85C",
+                "#F0CE7A", "#FFE8A8", "#F0CE7A"
+            ]
+            glow_sizes = [23, 25, 27, 29, 27, 25]
+
+            def animate_star(index=0):
+                if not popup.winfo_exists():
+                    return
+
+                star.config(
+                    fg=glow_colors[index],
+                    font=("Segoe UI", glow_sizes[index], "bold")
+                )
+
+                next_index = (index + 1) % len(glow_sizes)
+                popup.after(180, lambda: animate_star(next_index))
+
+            animate_star()
         # Title
         tk.Label(
             popup_container,
@@ -3735,14 +3816,17 @@ class FocusTimer:
             fg="#B8BED0",
             font=("Segoe UI", 9),
             justify="center",
-            wraplength=350
+            wraplength=wrapsize
         ).pack(padx=25, pady=5)
 
         # Understood button
         tk.Button(
             popup_container,
             text="UNDERSTOOD",
-            command=lambda: self.close_custom_popup(popup),
+            command=lambda: (
+                self.close_custom_popup(popup),
+                # self.root.after(100, self.bring_window_to_front)
+            ),
             bg="#7668E8",
             fg="white",
             activebackground="#897CF0",
@@ -3757,17 +3841,24 @@ class FocusTimer:
         # Keyboard shortcuts
         popup.bind(
             "<Return>",
-            lambda e: self.close_custom_popup(popup)
+            lambda e: (
+                self.close_custom_popup(popup),
+                # self.root.after(100, self.bring_window_to_front)
+            )
         )
         popup.bind(
             "<Escape>",
-            lambda e: self.close_custom_popup(popup)
+            lambda e: (
+                self.close_custom_popup(popup),
+                # self.root.after(100, self.bring_window_to_front)
+            )
         )
 
         # Calculate actual dimensions (DPI-aware)
         popup.update_idletasks()
         width, height = max(420, popup.winfo_reqwidth()), popup.winfo_reqheight()
         self.adjust_popup_dimensions(popup, size=(width, height), with_lift=True)
+        return popup
 
     def render_confirmation_popup(self, title, description, on_confirm, highlight_text=None, highlight_text_color= None):
         popup = tk.Toplevel(self.root)
@@ -4152,6 +4243,60 @@ class FocusTimer:
                 add="+"
             )
 
+
+    # ---------- HELPERS ----------
+    def make_card(self, parent, title, subtitle=None):
+        card = tk.Frame(
+            parent,
+            bg=PANEL,
+            highlightbackground=BORDER,
+            highlightthickness=1
+        )
+        heading = tk.Frame(card, bg=PANEL)
+        heading.pack(fill="x", padx=12, pady=(10, 5))
+
+        tk.Label(
+            heading,
+            text=title.upper(),
+            bg=PANEL,
+            fg=GOLD,
+            font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w")
+
+        if subtitle:
+            tk.Label(
+                heading,
+                text=subtitle,
+                bg=PANEL,
+                fg=MUTED,
+                font=("Segoe UI", 8)
+            ).pack(anchor="w", pady=(2, 0))
+
+        content = tk.Frame(card, bg=PANEL)
+        content.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+        return card, content
+
+    def make_button(self, parent, label, command, bg=PURPLE, fg = "#11131A", compact=False):
+        return tk.Button(
+            parent,
+            text=label,
+            command=command,
+            bg=bg,
+            fg=fg,
+            activebackground=TEXT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            font=("Segoe UI", 8 if compact else 9, "bold"),
+            padx=10 if compact else 14,
+            pady=5 if compact else 8
+        )
+
+    def add_hover(self, widget, normal, hover):
+        widget.bind("<Enter>", lambda e: widget.configure(bg=hover))
+        widget.bind("<Leave>", lambda e: widget.configure(bg=normal))
+
     # endregion
 
     # region ---------------- FUNCTIONS ----------------
@@ -4244,7 +4389,7 @@ class FocusTimer:
             text=f"⚔  {self.total_completed_bounties} "
                 f"{'Bounty' if self.total_completed_bounties == 1 else 'Bounties'}"
         )
-
+        
     def award_xp(self, amount):
         old_level = self.level
         old_realm = self.get_realm(old_level)["name"]
@@ -4280,6 +4425,265 @@ class FocusTimer:
     
     # endregion
 
+    # region Next Cultivation Variations
+    def update_next_cultivation_display(self):
+        grouped = {
+            "current": [],
+            "completed": [],
+            "postponed": []
+        }
+
+        today_str = date.today().isoformat()
+
+        for project, items in self.projects.items():
+            for item in items:
+                status = item.get("status", "current").lower()
+
+                if status not in grouped:
+                    status = "current"
+
+                if item.get("is_daily", False) and item.get("last_done_date") == today_str:
+                    status = "completed"
+
+                grouped[status].append((project, item))
+
+        bounty_content = self.next_cultivation_bounty_content
+
+        for child in bounty_content.winfo_children():
+            child.destroy()
+
+        current_bounties = grouped["current"]
+
+        if current_bounties:
+            if not hasattr(self, "next_cultivation_index"):
+                self.next_cultivation_index = 0
+
+            self.next_cultivation_index %= len(current_bounties)
+
+            self.update_next_cultivation_has_bounty(
+                current_bounties[self.next_cultivation_index],
+                wrap_size=500,
+                has_another=len(current_bounties) > 1
+            )
+
+        elif grouped["completed"]:
+            self.next_cultivation_index = 0
+            self.next_cultivation_finished_bounties(500)
+
+        else:
+            self.next_cultivation_index = 0
+            self.next_cultivation_empty(500)
+
+    def show_next_cultivation_recommendation(self):
+        self.next_cultivation_index += 1
+        self.update_next_cultivation_display()
+
+    def update_next_cultivation_has_bounty(
+        self, bounty_data, wrap_size, has_another=False
+    ):
+        project_name, bounty = bounty_data
+        bounty_content = self.next_cultivation_bounty_content
+
+        # Header
+        header = tk.Frame(bounty_content, bg="#211F38")
+        header.pack(fill="x")
+
+        tk.Label(
+            header,
+            text="✦  YOUR NEXT CULTIVATION",
+            bg="#211F38",
+            fg="#A78BFA",
+            font=("Segoe UI", 8, "bold")
+        ).pack(side="left")
+
+        # Header actions
+        header_actions = tk.Frame(header, bg="#211F38")
+        header_actions.pack(side="right")
+
+        tk.Label(
+            header_actions,
+            text="RECOMMENDED",
+            bg="#342C50",
+            fg="#C4B5FD",
+            font=("Segoe UI", 7, "bold"),
+            padx=7,
+            pady=3
+        ).pack(side="left", padx=(0, 6))
+
+        if has_another:
+            another_btn = tk.Button(
+                header_actions,
+                text="↻ Another",
+                command=self.show_next_cultivation_recommendation,
+                bg="#302B49",
+                fg="#C4B5FD",
+                activebackground="#40375E",
+                activeforeground="#E9D5FF",
+                font=("Segoe UI", 7, "bold"),
+                relief="flat",
+                bd=0,
+                padx=8,
+                pady=4,
+                cursor="hand2"
+            )
+            another_btn.pack(side="left")
+
+        # Quest title
+        tk.Label(
+            bounty_content,
+            text=bounty.get("task"),
+            bg="#211F38",
+            fg="#F1F0FF",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+            # wraplength=wrap_size,
+            justify="left"
+        ).pack(fill="x", pady=(12, 5))
+
+        # Category and estimated time
+        tk.Label(
+            bounty_content,
+            text=f"Sect: {project_name}   ·   Estimated time: {bounty.get("duration")} minutes",
+            bg="#211F38",
+            fg="#A5A2BC",
+            font=("Segoe UI", 8),
+            anchor="w"
+        ).pack(fill="x", pady=(0, 10))
+
+        # Reward and availability
+        info_row = tk.Frame(bounty_content, bg="#211F38")
+        info_row.pack(fill="x")
+
+        # Left actions group
+        actions = tk.Frame(info_row, bg="#211F38")
+        actions.pack(side="left")
+
+        tk.Label(
+            actions,
+            text=f"✦  {bounty.get('reward_xp')} XP",
+            bg="#302B49",
+            fg="#C4B5FD",
+            font=("Segoe UI", 9, "bold"),
+            padx=9,
+            pady=5
+        ).pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            actions,
+            text="Start  →",
+            command=lambda: self.choose_bounty(bounty),
+            bg="#8B6CF6",
+            fg="#FFFFFF",
+            activebackground="#7556D9",
+            activeforeground="#FFFFFF",
+            font=("Segoe UI", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=12,
+            pady=5,
+            cursor="hand2"
+        ).pack(side="left")
+
+        # Availability stays on the far right
+        tk.Label(
+            info_row,
+            text="●  AVAILABLE",
+            bg="#193B35",
+            fg="#6EE7B7",
+            font=("Segoe UI", 7, "bold"),
+            padx=8,
+            pady=5
+        ).pack(side="right")
+
+        # Footer hint
+        tk.Label(
+            bounty_content,
+            text="Your next challenge awaits.",
+            bg="#211F38",
+            fg="#77758F",
+            font=("Segoe UI", 7),
+            anchor="w"
+        ).pack(fill="x", pady=(10, 0))
+
+    def next_cultivation_finished_bounties(self, wrap_size):
+        bounty_content = self.next_cultivation_bounty_content
+
+        tk.Label(
+            bounty_content,
+            text="✦  CULTIVATION STATUS",
+            bg="#211F38",
+            fg="#A78BFA",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="No active bounties left!",
+            bg="#211F38",
+            fg="#F1F0FF",
+            font=("Segoe UI", 11, "bold")
+        ).pack(anchor="w", pady=(12, 5))
+
+        tk.Label(
+            bounty_content,
+            text="You've completed all your available quests. "
+                "Take a moment to appreciate your progress.",
+            bg="#211F38",
+            fg="#A5A2BC",
+            font=("Segoe UI", 8),
+            wraplength=wrap_size,
+            justify="left"
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="✧  Your next challenge awaits.",
+            bg="#211F38",
+            fg="#C4B5FD",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w", pady=(12, 0))
+   
+    def next_cultivation_empty(self, wrap_size):
+        bounty_content = self.next_cultivation_bounty_content
+
+        tk.Label(
+            bounty_content,
+            text="✦  YOUR CULTIVATION JOURNEY",
+            bg="#211F38",
+            fg="#A78BFA",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="A journey yet to begin.",
+            bg="#211F38",
+            fg="#F1F0FF",
+            font=("Segoe UI", 11, "bold")
+        ).pack(anchor="w", pady=(12, 5))
+
+        tk.Label(
+            bounty_content,
+            text="No active or completed tasks just yet. "
+                "Every great cultivator starts somewhere. "
+                "Your first step is waiting.",
+            bg="#211F38",
+            fg="#A5A2BC",
+            font=("Segoe UI", 8),
+            wraplength=wrap_size,
+            justify="left"
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="✧  Small steps lead to great things.",
+            bg="#211F38",
+            fg="#C4B5FD",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w", pady=(12, 0))
+    
+    # endregion
+
     # region Sects
     
     def create_project(self, name):
@@ -4308,12 +4712,49 @@ class FocusTimer:
             text=self.active_project
         )
 
+        # Update custom picker display
+        if self.bounty_project_var.get() not in self.projects:
+            self.bounty_project_var.set(self.active_project)
+
+        self.bounty_project_label.config(
+            text=self.bounty_project_var.get()
+        )
+        
     # endregion
 
     # region Bounties
 
     def current_missions(self): # get current missions
         return self.projects.setdefault(self.active_project, [])
+    
+    def current_grouped_missions(self): # get current missions
+        missions = self.current_missions()
+
+        today_str = date.today().isoformat()
+        grouped = {
+            "current": [],
+            "completed": [],
+            "postponed": []
+        }
+
+        for item in missions:
+            status = item.get("status", "current").lower()
+
+            if status not in grouped:
+                status = "current"
+
+            is_daily = item.get("is_daily", False)
+            last_done = item.get("last_done_date")
+            streak = item.get("streak_count", 0)
+
+            done_today = (
+                is_daily and last_done == today_str
+            )
+
+            if done_today: status = "completed"
+            grouped[status].append(item)
+        
+        return grouped, today_str
     
     def change_mission_status(self, mission, new_status):
         today = date.today()
@@ -4374,7 +4815,7 @@ class FocusTimer:
 
                 mission["status"] = "completed"
                 mission["completed_date"] = today_str
-                self.total_completed_bounties += 1
+            self.total_completed_bounties += 1
 
             # Record completion
             self.record_history(
@@ -4477,8 +4918,28 @@ class FocusTimer:
         self.render_mission_board()
         
     def add_mission(self):
+        if self.running and self.chosen_bounty is not None:
+            self.error_cannot_edit_bounties()
+            return
+        
+        project =  self.bounty_project_var.get().strip()
         task = self.task_var.get().strip()
 
+        try:
+            if project == "":
+                raise ValueError
+        except ValueError:
+            self.status_label.config(
+                text="Choose which sect to post the bounty in first."
+            )
+            return
+        
+        if not project:
+            self.status_label.config(
+                text="Give your bounty a name first."
+            )
+            return
+        
         try:
             if len(task) > 40:
                 raise ValueError
@@ -4487,14 +4948,14 @@ class FocusTimer:
                 text="Bounty name length can't exceed 40 words!"
             )
             return
-        
+       
         try:
             duration = int(float(self.minutes_var.get()))
             if duration <= 0 or duration > 1440:
                 raise ValueError
         except ValueError:
             self.status_label.config(
-                text="Set a duration between 1 and 1440 minutes."
+                text="Bounty duration must be between 1 and 1440 minutes!"
             )
             return
 
@@ -4516,9 +4977,7 @@ class FocusTimer:
             "completed_date": None
         }
 
-        self.current_missions().append(mission)
-
-        # self.selected_mission = len(self.current_missions()) - 1
+        self.projects.setdefault(project, []).append(mission)
 
         self.save_data()
         self.render_mission_board()
@@ -4530,6 +4989,8 @@ class FocusTimer:
         self.status_label.config(
             text="✦ New bounty successfully posted!"
         )
+
+        self.check_tutorial("bounty_creation")
 
     def confirm_remove_mission(self, mission):
         def remove_mission():
@@ -4562,7 +5023,36 @@ class FocusTimer:
     
     # region ---------------- TIMER LOGIC ----------------
 
+    def error_cannot_edit_bounties(self):
+        self.render_message_popup(
+            title="Bounty Board Locked",
+            description=(
+                "To prevent conflicts during an ongoing cultivation session, "
+                "the Bounty Board cannot be modified after choosing a recommended "
+                "bounty. You can edit it again once your session has ended."),
+            wrapsize=700
+        )
+        
+    def session_in_progress(self):
+        self.render_message_popup(
+                title="Cultivation in Progress",
+                description="You already have an ongoing cultivation session. Complete or end your current session before starting another."
+            )
+        
+    def choose_bounty(self, bounty):
+        if self.running:
+            self.session_in_progress()
+            return
+
+        self.chosen_bounty = bounty
+        self.control_minutes_var.set(bounty["duration"])
+        self.start_session()
+
     def start_session(self):
+        if self.running:
+            self.session_in_progress()
+            return
+
         try:
             minutes = float(self.control_minutes_var.get())
             if not 0 < minutes <= 1440:
@@ -4572,15 +5062,14 @@ class FocusTimer:
             self.status_label.config(text="Enter a duration between 0 and 1440 minutes.")
             return
 
-        if self.running:
-            return
-
         self.duration = seconds
         bonus = self.award_getting_started_bonus()
         if self.getting_started_streak >= 2 and bonus:
             self.render_streak_continues_popup(bonus, self._begin_session)
         else:
             self._begin_session()
+
+        self.check_tutorial("first_session")
 
     def _begin_session(self):
         if self.running:
@@ -4631,6 +5120,7 @@ class FocusTimer:
         if self.after_id:
             self.root.after_cancel(self.after_id)
             self.after_id = None
+            
         self.overlay.withdraw()
 
         self.timer_label.config(text="TIME'S UP!")
@@ -4805,7 +5295,8 @@ class FocusTimer:
             "projects": self.projects,
             "active_project": self.active_project,
             "last_getting_started": self.last_getting_started,
-            "getting_started_streak": self.getting_started_streak
+            "getting_started_streak": self.getting_started_streak,
+            "tutorials": self.tutorials
         }
 
         try:
@@ -4844,6 +5335,12 @@ class FocusTimer:
                     entry for entry in saved_history
                     if isinstance(entry, (str, dict))
                 ]
+          
+            saved_tutorials = data.get("tutorials", {})
+            self.tutorials = {
+                key: saved_tutorials.get(key, False)
+                for key in TUTORIALS_DICT
+            }
 
         except FileNotFoundError:
             pass
@@ -4966,6 +5463,200 @@ class FocusTimer:
 
         popup.destroy()
 
+    def create_custom_dropdown(
+        self,
+        parent,
+        variable,
+        values,
+        on_select=None,
+        width=12,
+        menu_attr="custom_menu",
+        bg="#222A3D",
+        fg="#E8EAF2",
+        accent="#A78BFA",
+        font=("Segoe UI", 9),
+        pady=6,
+        arrow="▾"
+    ):
+        picker = tk.Frame(
+            parent,
+            bg=bg,
+            highlightbackground="#303A52",
+            highlightthickness=1,
+            cursor="hand2"
+        )
+
+        picker.pack(side="left", padx=(0, 6))
+
+        label = tk.Label(
+            picker,
+            textvariable=variable,
+            bg=bg,
+            fg=fg,
+            font=font,
+            padx=0,
+            pady=pady,
+            cursor="hand2",
+            width=width,
+            anchor="w"
+        )
+        label.pack(side="left", padx=(10, 0))
+
+        arrow_label = tk.Label(
+            picker,
+            text=arrow,
+            bg=bg,
+            fg="#929BB2",
+            font=("Segoe UI Symbol", 10),
+            padx=9,
+            pady=5,
+            cursor="hand2"
+        )
+        arrow_label.pack(side="left")
+
+        def render_menu(event=None):
+            self.render_custom_dropdown(
+                picker=picker,
+                variable=variable,
+                values=values() if callable(values) else values,
+                on_select=on_select,
+                menu_attr=menu_attr
+            )
+
+        def on_enter(event=None):
+            picker.config(bg="#303A52")
+            label.config(bg="#303A52")
+            arrow_label.config(bg="#303A52")
+
+        def on_leave(event=None):
+            picker.config(bg=bg)
+            label.config(bg=bg)
+            arrow_label.config(bg=bg)
+
+        for widget in (picker, label, arrow_label):
+            widget.bind("<Button-1>", render_menu)
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+
+        return picker, label, arrow_label
+    
+    def render_custom_dropdown(
+        self,
+        picker,
+        variable,
+        values,
+        on_select=None,
+        width=19,
+        item_bg="#1A2030",
+        hover_bg="#303A52",
+        selected_bg="#222A3D",
+        fg="#E8EAF2",
+        selected_fg="#A78BFA",
+        border="#303A52",
+        gap=1,
+        menu_attr="custom_menu"
+    ):
+        # Toggle existing menu
+        existing_menu = getattr(self, menu_attr, None)
+
+        if existing_menu and existing_menu.winfo_exists():
+            existing_menu.destroy()
+            return
+
+        menu = tk.Toplevel(self.root)
+        setattr(self, menu_attr, menu)
+
+        menu.overrideredirect(True)
+        menu.configure(bg=border)
+
+        container = tk.Frame(
+            menu,
+            bg=item_bg,
+            highlightbackground=border,
+            highlightthickness=1
+        )
+        container.pack()
+
+        for value in values:
+            selected = value == variable.get()
+
+            item = tk.Label(
+                container,
+                text=f"{'✦  ' if selected else '    '}{value}",
+                bg=selected_bg if selected else item_bg,
+                fg=selected_fg if selected else fg,
+                font=("Segoe UI", 9),
+                anchor="w",
+                padx=12,
+                pady=8,
+                width=width,
+                cursor="hand2"
+            )
+            item.pack(fill="x")
+
+            def select_item(v=value):
+                menu.destroy()
+
+                if variable.get() != v:
+                    variable.set(v)
+
+                    if on_select:
+                        on_select()
+
+            item.bind(
+                "<Button-1>",
+                lambda e, callback=select_item: callback()
+            )
+
+            item.bind(
+                "<Enter>",
+                lambda e, w=item: w.config(bg=hover_bg)
+            )
+
+            item.bind(
+                "<Leave>",
+                lambda e, w=item, s=selected: w.config(
+                    bg=selected_bg if s else item_bg
+                )
+            )
+
+        menu.update_idletasks()
+
+        menu_width = menu.winfo_reqwidth()
+        menu_height = menu.winfo_reqheight()
+
+        x = picker.winfo_rootx()
+        picker_y = picker.winfo_rooty()
+
+        # Always open above the picker
+        y = picker_y - menu_height - gap
+
+        menu.geometry(f"{menu_width}x{menu_height}+{x}+{y}")
+
+        def close_menu(event=None):
+            if not menu.winfo_exists():
+                return
+
+            clicked_widget = self.root.winfo_containing(
+                self.root.winfo_pointerx(),
+                self.root.winfo_pointery()
+            )
+
+            def is_child_of(widget, parent):
+                while widget:
+                    if widget == parent:
+                        return True
+                    widget = widget.master
+                return False
+
+            if is_child_of(clicked_widget, picker):
+                return
+
+            menu.destroy()
+
+        menu.bind("<FocusOut>", close_menu)
+        menu.focus_force()  
+        return menu
     # endregion
 
     # region ---------------- HISTORY ----------------
@@ -5044,6 +5735,33 @@ class FocusTimer:
 
     # endregion
 
+    # region ---------------- TUTORIALS --------------
+    def check_tutorial(self, k):
+        if self.tutorials.get(k, False):
+            return
+
+        tutorial = TUTORIAL_MESSAGES.get(k)
+
+        if not tutorial:
+            return
+
+        popup = self.render_message_popup(
+            title=tutorial["title"],
+            description=tutorial["description"],
+            wrapsize=tutorial.get("wrapsize", 300),
+            is_welcome=True
+        )
+
+        self.tutorials[k] = True
+        self.save_data()
+
+        if popup and popup.winfo_exists():
+            popup.wait_window()
+
+        return popup
+    
+    # endregion
+                
 if __name__ == "__main__":
     root = tk.Tk()
     app = FocusTimer(root)
