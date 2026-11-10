@@ -700,6 +700,8 @@ class CultivationRealmMain:
         target.lift()
         target.focus_force()
 
+        if target == self.root: target.attributes("-topmost", False)
+
         self.tray_icon.visible = True
 
         if self.running:
@@ -1535,62 +1537,55 @@ class CultivationRealmMain:
 
             col_card.pack(fill="both", expand=True, padx=4, pady=4)
 
-            # Scrollable mission area
-            # scroll_container = tk.Frame(column, bg=PANEL)
-            # scroll_container.pack(
-            #     fill="both", expand=True, padx=7, pady=0
-            # )
+           # Scrollable mission area
+            scroll_container = tk.Frame(column, bg=PANEL)
+            scroll_container.pack(
+                fill="both", expand=True, padx=7, pady=0
+            )
+
+            scrollbar_frame = tk.Frame(
+                scroll_container,
+                bg=PANEL,
+                width=12
+            )
+            scrollbar_frame.pack(side="right", fill="y")
+            scrollbar_frame.pack_propagate(False)
+
             mission_canvas = tk.Canvas(
-                column,
+                scroll_container,
                 bg=PANEL,
                 highlightthickness=0
             )
-            # mission_canvas.pack(side="left", fill="both", expand=False)
+            mission_canvas.pack(
+                side="left",
+                fill="both",
+                expand=True,
+                padx=(0, 8)
+            )
 
             mission_scrollbar = ttk.Scrollbar(
-                column,
+                scrollbar_frame,
                 orient="vertical",
                 command=mission_canvas.yview,
                 style="Mission.Vertical.TScrollbar"
             )
-            mission_scrollbar.pack(side="right", fill="y")
-            mission_canvas.pack(side="left", fill="both", expand=True, padx=(0, 8))
+            mission_scrollbar.pack(
+                side="right",
+                fill="y",
+                expand=True
+            )
+
+            # Frame that actually lives inside the Canvas
+            mission_inner = tk.Frame(mission_canvas, bg=PANEL)
 
             mission_canvas.configure(
                 yscrollcommand=mission_scrollbar.set
             )
-            # Frame that actually lives inside the Canvas
-            mission_inner = tk.Frame(mission_canvas, bg=PANEL)
-
             mission_window = mission_canvas.create_window(
                 (0, 0),
                 window=mission_inner,
                 anchor="nw"
             )
-
-            # # Update scroll region when content changes
-            # def update_scroll_region(canvas, st):
-            #     bbox = canvas.bbox("all")
-
-            #     if bbox:
-            #         state = self._mission_virtual.get(st)
-            #         if state and state.get("mode") == "virtual":
-            #             grouped, today_str = self.current_grouped_missions()
-            #             missions = grouped.get(st, [])
-            #             offset = 10 * len(missions)
-            #             scrollregion = (bbox[0], bbox[1], bbox[2], bbox[3] + offset)
-            #         else:
-            #             scrollregion = canvas.bbox("all")
-
-            #         print(st, "update_scroll_region", scrollregion, state and state.get("mode") == "virtual")
-            #         canvas.configure(
-            #             scrollregion=scrollregion
-            #         )
-                    
-            # mission_inner.bind(
-            #     "<Configure>",
-            #     lambda event, canvas=mission_canvas, st=status: update_scroll_region(canvas, st)
-            # )
 
             # Keep embedded Frame as wide as Canvas
             mission_canvas.bind(
@@ -1599,36 +1594,14 @@ class CultivationRealmMain:
                     canvas.itemconfigure(window, width=event.width)
             )
 
-            def update_scrollbar(
-                canvas=mission_canvas,
-                inner=mission_inner,
-                scrollbar=mission_scrollbar
-            ):
-                canvas.configure(scrollregion=canvas.bbox("all"))
-
-                content_height = inner.winfo_reqheight()
-                visible_height = canvas.winfo_height()
-
-                if content_height > visible_height:
-                    if not scrollbar.winfo_ismapped():
-                        scrollbar.pack(side="right", fill="y")
-                else:
-                    if scrollbar.winfo_ismapped():
-                        scrollbar.pack_forget()
-
-            update = lambda: update_scrollbar(
-                mission_canvas, mission_inner, mission_scrollbar
-            )
-
             self.mission_canvases[status.lower()] = mission_canvas
-            self.mission_rows[status.lower()] = (mission_inner, update)
-
-            def update_virtual(event, status=status):
-                state = self._mission_virtual.get(status)
-                if state and state.get("mode") == "virtual" and state.get("layout"):
-                    self.root.after_idle(state["layout"])
-
-            self.scroll_on_wheel(mission_canvas, mission_inner, update_virtual)
+            self.mission_rows[status.lower()] = (mission_inner, mission_scrollbar)
+            
+            self.bind_wheel_recursive(
+                mission_inner,
+                mission_canvas,
+                lambda ev: self.update_virtual(status) 
+            )
 
         # Project and mission actions
         actions = tk.Frame(bounty_tab, bg=BG)
@@ -2009,29 +1982,49 @@ class CultivationRealmMain:
         )
 
         grouped, today_str = self.current_grouped_missions()
+        def update_scrollbar(canvas, inner, scrollbar):
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+            content_height = inner.winfo_reqheight()
+            visible_height = canvas.winfo_height()
+
+            if content_height > visible_height:
+                if not scrollbar.winfo_ismapped():
+                    scrollbar.pack(side="right", fill="y")
+            else:
+                if scrollbar.winfo_ismapped():
+                    scrollbar.pack_forget()
+
         for status in self.mission_rows.keys():
             missions = grouped.get(status, [])
 
-            mission_canvas = self.mission_canvases[status]
-            mission_row = self.mission_rows[status]
+            canvas = self.mission_canvases[status]
+            inner, scrollbar = self.mission_rows[status]
             
-            if len(missions) <= 15:
+            if len(missions) <= 10:
                 self._render_mission_board_normal(
-                    status, missions, today_str, mission_canvas, mission_row, reset_scroll
+                    status, missions, today_str, canvas, inner, reset_scroll
                 )
 
                 state = self._mission_virtual.setdefault(status, {})
                 state["mode"] = "normal"
+                update_scrollbar(canvas, inner, scrollbar)
+                
             else:
                 self._render_mission_board_virtual(
-                    status, missions, today_str, mission_canvas, mission_row, reset_scroll
+                    status, missions, today_str, canvas, inner, reset_scroll
                 )
+                if not scrollbar.winfo_ismapped():
+                    scrollbar.pack(side="right", fill="y")
+
+            scrollbar.configure(command=canvas.yview)
+            canvas.configure(yscrollcommand=scrollbar.set)
                 
     def _render_mission_board_virtual(
-            self, status, missions, today_str, canvas, mission_row, reset_scroll=False
+            self, status, missions, today_str, canvas, inner, reset_scroll=False
     ):
         # Render each column normally.
-        inner, update = mission_row
         old_state = self._mission_virtual.get(status)
 
         if reset_scroll or old_state is None:
@@ -2224,6 +2217,12 @@ class CultivationRealmMain:
                     )
                     card.pack(fill="both", expand=True)
 
+                    self.bind_wheel_recursive(
+                        card,
+                        canvas,
+                        lambda ev: self.update_virtual(status) 
+                    )
+
                     slot._mission_index = index
                     slot._mission_measured = False
                     new_slots.append(slot)
@@ -2290,24 +2289,20 @@ class CultivationRealmMain:
         canvas.yview_moveto(saved_position)
 
         layout(status)
-        update()
    
     def _render_mission_board_normal(
-        self, status, missions, today_str, canvas, mission_row, reset_scroll=False
+        self, status, missions, today_str, canvas, inner, reset_scroll=False
     ):
         # Save each column's scroll position.
         scroll_position = 0 if reset_scroll else canvas.yview()[0]
 
-        # Render each column normally.
-        container, update = mission_row
-
         # Remove previous cards.
-        for child in container.winfo_children():
+        for child in inner.winfo_children():
             child.destroy()
 
         if not missions:
             tk.Label(
-                container,
+                inner,
                 text="No bounties here",
                 bg="#1A2030",
                 fg="#929BB2",
@@ -2316,7 +2311,7 @@ class CultivationRealmMain:
 
         for item in missions:
             card = self._build_mission_card(
-                container,
+                inner,
                 item,
                 status,
                 today_str
@@ -2327,10 +2322,15 @@ class CultivationRealmMain:
                 expand=False,
                 pady=4
             )
-            card.update_idletasks()
-            card_height = card.winfo_height()
 
-        update()
+            self.bind_wheel_recursive(
+                card,
+                canvas,
+                lambda ev: self.update_virtual(status) 
+            )
+
+            card.update_idletasks()
+            # card_height = card.winfo_height()
 
         def restore_scroll():
             canvas.update_idletasks()
@@ -2338,6 +2338,54 @@ class CultivationRealmMain:
             canvas.yview_moveto(scroll_position)
 
         self.root.after_idle(restore_scroll)
+  
+    def update_virtual(self, status):
+        state = self._mission_virtual.get(status)
+        if state and state.get("mode") == "virtual" and state.get("layout"):
+            self.root.after_idle(state["layout"])
+
+    def bind_wheel_recursive(self, widget, scrollable, custom_update=None):
+        def on_mousewheel(event):
+            first, last = scrollable.yview()
+
+            # No scrolling needed if everything is visible
+            if first <= 0 and last >= 1:
+                return "break"
+
+            if event.num == 4:
+                direction = -1
+            elif event.num == 5:
+                direction = 1
+            else:
+                direction = -1 if event.delta > 0 else 1
+
+            # Prevent scrolling beyond the boundaries
+            if direction < 0 and first <= 0:
+                return "break"
+
+            if direction > 0 and last >= 1:
+                return "break"
+
+            scrollable.yview_scroll(direction, "units")
+
+            if custom_update:
+                custom_update(event)
+
+            return "break"
+
+            scrollable.yview_scroll(direction, "units")
+
+            if custom_update:
+                custom_update(event)
+
+            return "break"
+
+        widget.bind("<MouseWheel>", on_mousewheel, add="+")
+        widget.bind("<Button-4>", on_mousewheel, add="+")
+        widget.bind("<Button-5>", on_mousewheel, add="+")
+
+        for child in widget.winfo_children():
+            self.bind_wheel_recursive(child, scrollable, custom_update)
   
     # endregion
 
@@ -5248,6 +5296,86 @@ class CultivationRealmMain:
                 add="+"
             )
 
+    def scroll_on_wheel2(self, scrollable, container=None, custom_update=None):
+
+        if not hasattr(self, "_wheel_bindings"):
+            self._wheel_bindings = {}
+
+        key = str(scrollable)
+
+        if key in self._wheel_bindings:
+            return
+
+        self._wheel_bindings[key] = True
+
+        def on_mousewheel(event):
+            target = event.widget
+
+            # Let Text widgets handle their own scrolling
+            while target is not None:
+                if isinstance(target, tk.Text):
+                    first, last = target.yview()
+                    if first <= 0 and last >= 1:
+                        return "break"
+                    break
+                target = target.master
+            else:
+                target = scrollable
+                first, last = target.yview()
+
+                if first <= 0 and last >= 1:
+                    return "break"
+
+            direction = (
+                -1 if event.num == 4 else
+                1 if event.num == 5 else
+                -1 if event.delta > 0 else 1
+            )
+            print("mousewheel", direction)
+
+            target.yview_scroll(direction, "units")
+
+            if custom_update:
+                custom_update(event)
+
+            return "break"
+
+        def bind_wheel(event):
+            scrollable.bind_all("<MouseWheel>", on_mousewheel)
+            scrollable.bind_all("<Button-4>", on_mousewheel)
+            scrollable.bind_all("<Button-5>", on_mousewheel)
+
+        def unbind_wheel(event):
+            scrollable.unbind_all("<MouseWheel>")
+            scrollable.unbind_all("<Button-4>")
+            scrollable.unbind_all("<Button-5>")
+
+        def bind_recursive(widget):
+            if getattr(widget, "_wheel_enter_bound", False):
+                return
+
+            widget._wheel_enter_bound = True
+
+            widget.bind("<Enter>", bind_wheel, add="+")
+            widget.bind("<Leave>", unbind_wheel, add="+")
+
+            for child in widget.winfo_children():
+                bind_recursive(child)
+
+        widgets = [scrollable]
+
+        if container is not None:
+            widgets.append(container)
+
+        for widget in widgets:
+            bind_recursive(widget)
+
+        if container is not None:
+            container.bind(
+                "<Map>",
+                lambda event: bind_recursive(container),
+                add="+"
+            )
     # ---------- HELPERS ----------
     def make_card(
         self,

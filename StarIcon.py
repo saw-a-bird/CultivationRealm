@@ -3,6 +3,7 @@ import re
 import colorsys
 from pathlib import Path
 import io
+import sys
 
 from PIL import Image, ImageTk, ImageFilter, ImageColor
 import resvg_py
@@ -603,10 +604,12 @@ class StarIcon:
         if icon.endswith(".svg"):
             icon_name = icon
 
-            # Resolve assets/icons relative to this Python file
-            icons_dir = Path(__file__).resolve().parent / "assets" / "icons"
-            # print("ICONS DIR", icons_dir)
+            if getattr(sys, "frozen", False):
+                base_dir = Path(sys._MEIPASS)
+            else:
+                base_dir = Path(__file__).resolve().parent
 
+            icons_dir = base_dir / "assets" / "icons"
             svg_path = icons_dir / icon_name
 
             if not svg_path.exists():
