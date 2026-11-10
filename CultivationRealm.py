@@ -3,16 +3,18 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, date, timedelta
 from collections import defaultdict
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageTk
 import time
 import random
 import json
 import os
 import sys
 import re
+import tkinter.font as tkfont
 
 import ctypes
 import pystray
+from StarIcon import StarIcon, StarIconColors
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -28,7 +30,10 @@ PANEL_ALT = "#222A3D"
 BORDER = "#303A52"
 TEXT = "#E8EAF2"
 MUTED = "#929BB2"
+DEEP_MUTED = "#B1A9DC"
 PURPLE = "#A78BFA"
+BRIGHT_PURPLE="#D2C9E3"
+WHITE_GOLD = "#F0E6C6"
 GOLD = "#F5C66A"
 GREEN = "#65D6A0"
 RED = "#F08080"
@@ -59,7 +64,7 @@ REALMS = [
     (0, 1, "MORTAL", "You are but an ordinary mortal.",
     "No power. No foundation. Only the potential to begin.", 50),
 
-    (2, 5, "THE PATH OF INITIATION", "Your journey begins here.",
+    (2, 5, "THE PATH OF INITIATION", "Your journey begins here.", # THE PATH OF INITIATION
         "Every cultivator must overcome the resistance of beginning.", 150),
 
     (6, 12, "BODY REFINEMENT", "Forge discipline. Strengthen your foundation.",
@@ -312,7 +317,7 @@ TUTORIAL_MESSAGES = {
 
 # -------------- MAIN CLASS --------------------
 
-class FocusTimer:
+class CultivationRealmMain:
     def __init__(self, root):
         self.root = root
         self.root.title("Cultivation Realm")
@@ -336,6 +341,9 @@ class FocusTimer:
         self.build_tray_icon()
         # self.root.bind("<Map>", self.restore_custom_titlebar)
         # print("OK")
+
+        self._mission_virtual = {}
+        self._current_popups = []
 
         self.tutorials = TUTORIALS_DICT
         self.duration = 0
@@ -361,13 +369,11 @@ class FocusTimer:
         self.load_data()
         self.setup_styles()
         self.build_main()
-        self.update_xp_display()
-        self.update_next_cultivation_display()
 
-        # print("OK2.5")
-        # self.selected_mission = None
-        self.render_mission_board()
-        self.render_mission_log()
+        self.schedule_update("dashboard", "ui_render_dashboard_xp_display")
+        self.schedule_update("dashboard", "ui_update_next_cultivation_display")
+        self.schedule_update("board", "render_mission_board")
+        self.schedule_update("history", "render_mission_log")
 
         # print("OK3")
 
@@ -377,6 +383,47 @@ class FocusTimer:
         self.show_window()
         # print("OK4")
         
+
+    # region ---------------- UPDATE SCHEDULER ---------
+
+    def schedule_update(self, tab_name, update_name, args=None):
+        args = args or {}
+        tab_index = self.tab_names[tab_name]
+        current_tab_index = self.notebook.index(self.notebook.select())
+
+        if current_tab_index == tab_index:
+            getattr(self, update_name)(**args)
+        else:
+            self.pending_display_updates.setdefault(
+                tab_index, {}
+            )[update_name] = args
+
+    def _process_display_updates(self, event=None):
+        current_tab_index = self.notebook.index(self.notebook.select())
+        
+        # update UI
+        updates = self.pending_display_updates.pop(current_tab_index, {})
+
+        for update_name, args in updates.items():
+            getattr(self, update_name)(**args)
+            
+        self.check_tutorial_popups(current_tab_index)
+
+    def check_tutorial_popups(self, current_tab_index=None):
+        current_tab_index = current_tab_index or  self.notebook.index(self.notebook.select())
+        tutorial_map = {
+            0: "onboarding",
+            1: "bountyboard",
+            2: "chronicles"
+        }
+
+        tutorial_key = tutorial_map.get(current_tab_index)
+
+        if tutorial_key and tutorial_key not in self.visited_tutorial_tabs:
+            self.visited_tutorial_tabs.add(tutorial_key)
+            self.check_tutorial(tutorial_key)
+
+    # endregion
 
     # region ---------------- STYLES -------------------
         
@@ -512,8 +559,10 @@ class FocusTimer:
             if not reset_btn.winfo_exists():
                 return
 
-            reset_btn.configure(fg=colors[index])
-            index = (index + 1) % len(colors)
+            current_tab_index = self.notebook.index(self.notebook.select())
+            if current_tab_index == 2:
+                reset_btn.update_text_color(colors[index])
+                index = (index + 1) % len(colors)
 
             reset_btn.after(120, pulse)
 
@@ -628,26 +677,36 @@ class FocusTimer:
         self.root.withdraw()
         self.tray_icon.visible = True
         
+        self.check_tutorial("minimize")
         if not self.running:
             return
 
         self.overlay.deiconify()
         self.overlay.lift()
-        self.check_tutorial("minimize")
-
+    
     def show_window(self, event=None):
         self.root.deiconify()
-        self.root.state("zoomed")
-        self.root.lift()
-        self.root.focus_force()
         self.root.overrideredirect(True)
+        self.root.state("zoomed")
+
+        # Find the latest popup that still exists
+        target = next(
+            (popup for popup in reversed(self._current_popups)
+            if popup.winfo_exists()),
+            self.root
+        )
+
+        target.attributes("-topmost", True)
+        target.lift()
+        target.focus_force()
+
         self.tray_icon.visible = True
-        
+
         if self.running:
             self.status_label.config(
                 text="Session still running. Keep going!"
             )
-
+   
     def toggle_maximize(self):
         if not hasattr(self, "is_maximized"):
             self.is_maximized = False
@@ -751,6 +810,10 @@ class FocusTimer:
         header = tk.Frame(self.root, bg=BG)
         header.pack(fill="x", padx=18, pady=(12, 8))
 
+        # ==========================================================
+        # region Main Frame Setup
+        # ==========================================================
+
         # Quote Label Header
         quote_label = tk.Label(
             header,
@@ -781,163 +844,255 @@ class FocusTimer:
 
 
         # ---------- NOTEBOOK ----------
-        notebook = ttk.Notebook(
+        self.notebook = ttk.Notebook(
             self.root,
             style="Cultivation.TNotebook"
         )
-        notebook.pack(fill="both", expand=True, padx=14, pady=(0, 10))
+        self.notebook.pack(fill="both", expand=True, padx=14, pady=(0, 10))
 
-        dashboard_tab = tk.Frame(notebook, bg=BG)
-        bounty_tab = tk.Frame(notebook, bg=BG)
-        chronicle_tab = tk.Frame(notebook, bg=BG)
+        dashboard_tab = tk.Frame(self.notebook, bg=BG)
+        bounty_tab = tk.Frame(self.notebook, bg=BG)
+        chronicle_tab = tk.Frame(self.notebook, bg=BG)
 
-        notebook.add(dashboard_tab, text="  ✦ DASHBOARD  ")
-        notebook.add(bounty_tab, text="  ⚔ BOUNTY BOARD  ")
-        notebook.add(chronicle_tab, text="  📜 CHRONICLE  ")
+        self.notebook.add(dashboard_tab, text="  🏠 DASHBOARD  ")
+        self.notebook.add(bounty_tab, text="  ⚔ BOUNTY BOARD  ")
+        self.notebook.add(chronicle_tab, text="  📜 CHRONICLE  ")
+        
+        self.tab_names = {
+            "dashboard": 0,
+            "board": 1,
+            "history": 2
+        }
+
+        self.pending_display_updates = {}
+
+        self.notebook.bind(
+            "<<NotebookTabChanged>>",
+            self._process_display_updates
+        )
+        
+        # Show onboarding when Dashboard is first opened
+        self.root.after(100, lambda: self.check_tutorial_popups())
         
         # Track tutorials already triggered this session
         self.visited_tutorial_tabs = set()
 
-        def on_tab_changed(event=None):
-            selected_tab = notebook.index(notebook.select())
 
-            tutorial_map = {
-                0: "onboarding",
-                1: "bountyboard",
-                2: "chronicles"
-            }
+        # endregion
 
-            tutorial_key = tutorial_map.get(selected_tab)
-
-            if tutorial_key and tutorial_key not in self.visited_tutorial_tabs:
-                self.visited_tutorial_tabs.add(tutorial_key)
-                self.check_tutorial(tutorial_key)
-
-        notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
-
-        # Show onboarding when Dashboard is first opened
-        self.root.after(100, lambda: on_tab_changed())
         # ==========================================================
         # region DASHBOARD TAB
         # ==========================================================
         dashboard_tab.columnconfigure(0, weight=6, uniform="dashboard")
         dashboard_tab.columnconfigure(1, weight=4, uniform="dashboard")
         dashboard_tab.rowconfigure(0, weight=1)
+        dashboard_tab.rowconfigure(1, weight=0, minsize=30)
 
         left = tk.Frame(dashboard_tab, bg=BG)
-        left.grid(row=0, column=0, sticky="nsew", padx=(8, 5), pady=8)
+        left.grid(
+            row=0, column=0,
+            sticky="nsew",
+            padx=(8, 5),
+            pady=(8, 0)
+        )
 
         right = tk.Frame(dashboard_tab, bg=BG)
-        right.grid(row=0, column=1, sticky="nsew", padx=(5, 8), pady=8)
+        right.grid(
+            row=0, column=1,
+            sticky="nsew",
+            padx=(5, 8),
+            pady=(8, 0)
+        )
 
         # Cultivation rank
         rank_card, rank_content = self.make_card(
-            left, "Cultivation Realm", "Your current path to mastery"
+            left, "Cultivation Realm", None, title_color="#9A85BA", icon_type="star", content_pady=(2,0)
         )
         rank_card.pack(fill="x", pady=(0, 8))
 
+        # Main title
         self.rank_label = tk.Label(
             rank_content,
-            text="Novice Cultivator",
+            text="BODY REFINEMENT",
             bg=PANEL,
-            fg=PURPLE,
-            font=("Segoe UI", 16, "bold")
+            fg="#FFD477",
+            font=("Georgia", 24, "bold")
         )
         self.rank_label.pack(anchor="w")
-
-        self.level_label = tk.Label(
+        
+        # Badge text
+        self.level_badge = self.make_rounded_badge(
             rank_content,
-            text="LEVEL 0",
-            bg=PANEL,
-            fg=TEXT,
-            font=("Segoe UI", 9, "bold")
+            "LEVEL 6",
+            width=108,
+            height=29,
+            radius=14,
+            bg_color="#58358F",
+            outline_color="#7650B8",
+            text_color="#FFFFFF",
+            font=("Segoe UI", 10, "bold"),
+            pady=(4, 0)
         )
-        self.level_label.pack(anchor="w", pady=(3, 0))
-
+        
         # Realm description
         self.rank_description = tk.Label(
             rank_content,
             text="You are but an ordinary mortal.",
             bg=PANEL,
-            fg=MUTED,
+            fg="#CDC7E4",
             font=("Segoe UI", 8),
             anchor="w"
         )
-        self.rank_description.pack(fill="x", pady=(3, 10))
+        self.rank_description.pack(fill="x", pady=(6, 25))
 
         # XP + percentage
         xp_header = tk.Frame(rank_content, bg=PANEL)
         xp_header.pack(fill="x")
 
-        self.xp_label = tk.Label(
+        # Current XP
+        self.xp_canvas = tk.Canvas(
             xp_header,
-            text="5 / 50 XP",
+            width=500,
+            height=22,
             bg=PANEL,
-            fg=GOLD,
-            font=("Segoe UI", 10, "bold")
+            highlightthickness=0,
+            bd=0
         )
-        self.xp_label.pack(side="left")
+        self.xp_canvas.pack(side="left")
 
-        self.xp_percentage_label = tk.Label(
-            xp_header,
-            text="10%",
-            bg=PANEL,
-            fg=MUTED,
-            font=("Segoe UI", 8)
+        self.xp_current_font = tkfont.Font(
+            family="Segoe UI", size=14, weight="bold"
         )
-        self.xp_percentage_label.pack(side="right")
+        self.xp_separator_font = tkfont.Font(
+            family="Segoe UI", size=12, weight="bold"
+        )
+        self.xp_max_font = tkfont.Font(
+            family="Segoe UI", size=12, weight="bold"
+        )
+
+        self.xp_current = self.xp_canvas.create_text(
+            0, 21, text="5",
+            fill=GOLD,
+            font=self.xp_current_font,
+            anchor="sw"
+        )
+
+        self.xp_separator = self.xp_canvas.create_text(
+            0, 21, text="/",
+            fill="#FFFFFF",
+            font=self.xp_separator_font,
+            anchor="sw"
+        )
+
+        self.xp_max = self.xp_canvas.create_text(
+            0, 21, text="50 XP",
+            fill=GOLD,
+            font=self.xp_max_font,
+            anchor="sw"
+        )
+
+        # self.update_xp_display("5", "50")
 
         # Progress bar styling
-        style = ttk.Style()
+        xp_progress_row = tk.Frame(rank_content, bg=PANEL)
+        xp_progress_row.pack(fill="x", pady=(0, 0))
 
-        style.configure(
-            "Cultivation.Horizontal.TProgressbar",
-            troughcolor="#303548",
-            background=PURPLE,
-            bordercolor="#303548",
-            lightcolor=PURPLE,
-            darkcolor=PURPLE,
-            thickness=9
+        # Progress bar
+        self.xp_progress = tk.Canvas(
+            xp_progress_row,
+            height=22,
+            bg=PANEL,
+            highlightthickness=0,
+            bd=0
         )
+        self.xp_progress.pack(side="left", fill="x", expand=True)
 
-        self.xp_progress = ttk.Progressbar(
-            rank_content,
-            orient="horizontal",
-            mode="determinate",
-            maximum=100,
-            style="Cultivation.Horizontal.TProgressbar"
+        self.xp_progress_value = 0
+        self.xp_progress.bind("<Configure>", self.draw_xp_progress)
+
+        # self.draw_xp_progress()
+
+        # Percentage label
+        self.xp_percentage_label = tk.Label(
+            xp_progress_row,
+            text="10%",
+            bg=PANEL,
+            fg="#E0DCFF",
+            font=("Segoe UI", 10, "bold")
         )
-        self.xp_progress.pack(fill="x", pady=(5, 4))
+        
+        self.xp_percentage_label.pack(
+            side="left",
+            padx=(11, 5),
+            pady=(0, 6)
+        )
 
         # Remaining XP
+        # XP to next level row
+        xp_next_row = tk.Frame(rank_content, bg=PANEL)
+        xp_next_row.pack(anchor="w")
+
+        self.total_xp_icon = StarIcon.svg_to_photo(
+            StarIcon.chevrons_down_svg(),
+            size=(24, 24)
+        )
+
+        tk.Label(
+            xp_next_row,
+            image=self.total_xp_icon,
+            bg=PANEL
+        ).pack(side="left", padx=(0, 0))
+
         self.total_xp_label = tk.Label(
-            rank_content,
+            xp_next_row,
             text="45 XP to next level",
             bg=PANEL,
-            fg=MUTED,
+            fg="#A9A2C7",
             font=("Segoe UI", 8)
         )
-        self.total_xp_label.pack(anchor="w")
+        self.total_xp_label.pack(side="left")
 
         # Separator
-        tk.Frame(
-            rank_content,
-            bg=BORDER,
-            height=1
-        ).pack(fill="x", pady=(10, 8))
+        # tk.Frame(
+        #     rank_content,
+        #     bg=PANEL,
+        #     height=1
+        # ).pack(fill="x", pady=(10, 8))
 
         # Next breakthrough
-        self.next_realm_label = tk.Label(
+        rank_card2, rank_content2 = self.make_card(
             rank_content,
-            text="✦  NEXT BREAKTHROUGH: THE PATH OF INITIATION",
+            has_content=False,
+            content_pady=(2, 5),
+            border_color="#95825A",
+            icon_type="diagram",
+            icon_size=(28, 28)
+        )
+
+        self.next_realm_label = tk.Label(
+            rank_content2,
+            text="NEXT BREAKTHROUGH: THE PATH OF INITIATION",
             bg=PANEL,
             fg=GOLD,
-            font=("Segoe UI", 9, "bold"),
-            anchor="w",
-            justify="left"
+            font=("Segoe UI", 9, "bold")
         )
-        self.next_realm_label.pack(fill="x")
+        self.next_realm_label.pack(side="left", anchor="w")
 
+        # Flexible empty space between label and chevron
+        spacer = tk.Frame(rank_content2, bg=PANEL)
+        spacer.pack(side="left", fill="x", expand=True)
+
+        # Chevron at the far right
+        self.create_icon(
+            rank_content2,
+            "chevron-right",
+            size=(32, 32),
+            side="right",
+            glow=True
+        )
+        rank_content2.pack(fill="x", expand=True)
+        rank_card2.pack(fill="both", pady=(10, 0))
+        
         # region DAILY STREAK & LIFETIME XP
 
         stats_frame = tk.Frame(left, bg=BG)
@@ -949,7 +1104,8 @@ class FocusTimer:
 
         # DAILY STREAK
         streak_card, streak_content = self.make_card(
-            stats_frame, "Daily Streak", "Consistency"
+            stats_frame, "Daily Streak", "Consistency", content_pady=(5,5), 
+            title_color=WHITE_GOLD, subtitle_color=BRIGHT_PURPLE
         )
         streak_card.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
@@ -966,48 +1122,68 @@ class FocusTimer:
 
         # LIFETIME XP
         lifetime_card, lifetime_content = self.make_card(
-            stats_frame, "Lifetime XP", "Total earned"
+            stats_frame, "Lifetime XP", "Total earned", content_pady=(5,5),
+            title_color=WHITE_GOLD, subtitle_color=BRIGHT_PURPLE
         )
         lifetime_card.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
+        self.create_star_icon(
+            lifetime_content,
+            color=StarIconColors.GOLD,
+            filled=True,
+            size=(42, 42)
+        )
+
         self.dashboard_xp_card = tk.Label(
             lifetime_content,
-            text=f"✦  {self.xp} XP",
+            text=f"{self.xp} XP",
             bg=PANEL,
             fg=GOLD,
             font=("Segoe UI", 17, "bold")
         )
         
-        self.dashboard_xp_card.pack(anchor="w")
+        self.dashboard_xp_card.pack(anchor="w", side="left")
 
         # TOTAL BOUNTIES
         total_bounties_card, total_bounties_content = self.make_card(
-            stats_frame, "Bounties Completed", "Total victories"
+            stats_frame, "Bounties Completed", "Total victories", content_pady=(5,5), 
+            title_color=WHITE_GOLD, subtitle_color=BRIGHT_PURPLE
         )
-        total_bounties_card.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
+        total_bounties_card.grid(row=0, column=2, sticky="nsew", padx=(8, 0))
+
+        self.create_icon(
+            total_bounties_content,
+            "flower",
+            size=(48, 48),
+            side="left"
+        )
 
         self.dashboard_bounty_card = tk.Label(
             total_bounties_content,
-            text=f"⚔  {self.total_completed_bounties} "
+            text=f"{self.total_completed_bounties} "
                 f"{'Bounty' if self.total_completed_bounties == 1 else 'Bounties'}",
             bg=PANEL,
             fg=GOLD,
             font=("Segoe UI", 17, "bold")
         )
 
-        self.dashboard_bounty_card.pack(anchor="w")
-
+        self.dashboard_bounty_card.pack(anchor="w", side="left")
         # endregion
 
         # region ---------- COMPACT MISSION CREATION ----------
         task_card, task_content = self.make_card(
-            left, "New Bounty", "Prepare your next cultivation session"
+            left, "New Bounty", "Prepare your next cultivation session",
+            icon_type="bounty",
+            icon_size=(46, 82),
+            content_pady=(4, 2),
+            icon_with_subtitle=True
+
         )
         task_card.pack(fill="x", pady=(0, 8))
         # region Bounty name + Sect picker
 
         bounty_name_row = tk.Frame(task_content, bg=PANEL)
-        bounty_name_row.pack(fill="x", pady=(3, 8))
+        bounty_name_row.pack(fill="x", pady=(0, 5))
 
         # Sect field (left)
         sect_field = tk.Frame(bounty_name_row, bg=PANEL)
@@ -1017,10 +1193,10 @@ class FocusTimer:
             sect_field,
             text="ASSIGN TO SECT",
             bg=PANEL,
-            fg=MUTED,
+            fg=DEEP_MUTED,
             font=("Segoe UI", 8, "bold"),
             anchor="w"
-        ).pack(anchor="w", pady=(0, 5))
+        ).pack(anchor="w", pady=(0, 2))
 
         self.bounty_project_var = tk.StringVar(value=self.active_project)
 
@@ -1033,7 +1209,7 @@ class FocusTimer:
             variable=self.bounty_project_var,
             values=lambda: list(self.projects.keys()),
             menu_attr="bounty_project_menu",
-            width=12
+            width=70
         )
 
         # Bounty name field (right)
@@ -1044,30 +1220,24 @@ class FocusTimer:
             name_field,
             text="BOUNTY NAME",
             bg=PANEL,
-            fg=MUTED,
+            fg=DEEP_MUTED,
             font=("Segoe UI", 8, "bold"),
             anchor="w"
-        ).pack(anchor="w", pady=(0, 5))
+        ).pack(anchor="w", pady=(0, 2))
 
         self.task_var = getattr(
             self, "task_var", tk.StringVar()
         )
-        entry_container = tk.Frame(name_field, bg=PANEL_ALT)
-        entry_container.pack(fill="x")
-
-        self.task_entry = tk.Entry(
-            entry_container,
+        
+        self.task_entry_container, self.task_entry = self.make_rounded_entry(
+            name_field,
             textvariable=self.task_var,
-            bg=PANEL_ALT,
-            fg=TEXT,
-            insertbackground=TEXT,
-            relief="flat",
-            font=("Segoe UI", 9)
-        )
-        self.task_entry.pack(
-            fill="x",
-            padx=(10, 10),
-            ipady=6
+            icon_type="feather",
+            icon_size=(24, 24),
+            fg_color=DEEP_MUTED,
+            icon_padx=(15, 15),
+            height=40,
+            radius=12
         )
         # endregion
 
@@ -1079,13 +1249,13 @@ class FocusTimer:
         fields.columnconfigure(1, weight=1)
 
         # Duration
-        duration_frame = tk.Frame(fields, bg=PANEL)
-        duration_frame.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        duration_field = tk.Frame(fields, bg=PANEL)
+        duration_field.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 
         duration_label = tk.Label(
-            duration_frame,
+            duration_field,
             text="DURATION (MIN)",
-            bg=PANEL, fg=MUTED,
+            bg=PANEL, fg=DEEP_MUTED,
             font=("Segoe UI", 7, "bold")
         )
         duration_label.pack(anchor="w")
@@ -1094,31 +1264,25 @@ class FocusTimer:
             self, "minutes_var", tk.StringVar(value="25")
         )
 
-        entry_duration_container = tk.Frame(duration_frame, bg=PANEL_ALT)
-        entry_duration_container.pack(fill="x")
-
-        self.minutes_entry = tk.Entry(
-            entry_duration_container,
+        self.entry_duration_container, self.minutes_entry = self.make_rounded_entry(
+            duration_field,
             textvariable=self.minutes_var,
-            bg=PANEL_ALT, fg=TEXT,
-            insertbackground=TEXT,
-            relief="flat",
-            font=("Segoe UI", 9)
-        )
-        self.minutes_entry.pack(
-            fill="x",
-            padx=(10, 10),
-            ipady=6
+            icon_type="clock",
+            fg_color=DEEP_MUTED,
+            icon_size=(24, 24),
+            icon_padx=(15, 15),
+            height=40,
+            radius=12
         )
 
         # XP reward
-        reward_frame = tk.Frame(fields, bg=PANEL)
-        reward_frame.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        reward_field = tk.Frame(fields, bg=PANEL)
+        reward_field.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
         tk.Label(
-            reward_frame,
+            reward_field,
             text="XP REWARD",
-            bg=PANEL, fg=GOLD,
+            bg=PANEL, fg="#EBBE9C",
             font=("Segoe UI", 7, "bold")
         ).pack(anchor="w")
 
@@ -1126,21 +1290,15 @@ class FocusTimer:
             self, "reward_var", tk.StringVar(value="50")
         )
 
-        entry_reward_container = tk.Frame(reward_frame, bg=PANEL_ALT)
-        entry_reward_container.pack(fill="x")
-
-        self.reward_entry = tk.Entry(
-            entry_reward_container,
+        self.entry_reward_container, self.reward_entry = self.make_rounded_entry(
+            reward_field,
             textvariable=self.reward_var,
-            bg=PANEL_ALT, fg=GOLD,
-            insertbackground=TEXT,
-            relief="flat",
-            font=("Segoe UI", 9)
-        )
-        self.reward_entry.pack(
-            fill="x",
-            padx=(10, 10),
-            ipady=6
+            fg_color="#FCEB6B",
+            icon_type="star",
+            icon_size=(24, 24),
+            icon_padx=(15, 15),
+            height=40,
+            radius=12
         )
 
         # Daily checkbox and quick duration presets
@@ -1175,14 +1333,10 @@ class FocusTimer:
                 presets,
                 str(duration),
                 lambda d=duration: self.minutes_var.set(str(d)),
-                bg=PANEL_ALT,
-                compact=True
-            )
-            btn.configure(
-                fg=TEXT,
-                padx=7,
-                pady=3,
-                font=("Segoe UI", 7, "bold")
+                bg=BRIGHT_PURPLE,
+                fg=BRIGHT_PURPLE,
+                compact=True,
+                font_size=9
             )
             btn.pack(side="left", padx=(3, 0))
 
@@ -1191,36 +1345,36 @@ class FocusTimer:
             task_content,
             "✦ POST BOUNTY",
             self.add_mission,
-            GOLD,
+            font_size=9,
+            bg=GOLD,
             compact=True
         ).pack(fill="x", pady=(9, 0))
         
         # endregion 
 
         # region Next Cultivation - Featured Bounty
-        self.next_cultivation_frame = tk.Frame(
-            right,
-            bg="#211F38",
-            highlightbackground="#8B6CF6",
-            highlightthickness=1
-        )
-        self.next_cultivation_frame.pack(fill="x", pady=(0, 10))
+        next_cultivation_card, self.next_cultivation_bounty_content = self.make_card(
+            right, "Cultivation", "Choose your path and begin your training",
+            content_pady=(0, 10), border_color="#BC74FB", card_bg="#211F38", 
+            has_content=False, content_padx=(12, 10)
+        ) #"Focus begins with a single decision"
+        next_cultivation_card.pack(fill="x", pady=(0, 8))
+        
+        # accent = tk.Frame(
+        #     self.next_cultivation_frame,
+        #     bg="#BC74FB",
+        #     height=3
+        # )
+        # accent.pack(fill="x")
+        # accent.pack_propagate(False)
 
-        accent = tk.Frame(
-            self.next_cultivation_frame,
-            bg="#8B6CF6",
-            height=3
-        )
-        accent.pack(fill="x")
-        accent.pack_propagate(False)
-
-        self.next_cultivation_bounty_content = tk.Frame(
-            self.next_cultivation_frame,
-            bg="#211F38",
-            padx=13,
-            pady=11
-        )
-        self.next_cultivation_bounty_content.pack(fill="x")
+        # self.next_cultivation_bounty_content = tk.Frame(
+        #     self.next_cultivation_frame,
+        #     bg="#211F38",
+        #     padx=13,
+        #     pady=11
+        # )
+        # self.next_cultivation_bounty_content.pack(fill="x")
 
         # endregion
 
@@ -1230,42 +1384,32 @@ class FocusTimer:
         ) #"Focus begins with a single decision"
         control_card.pack(fill="x", pady=(0, 8))
 
-        duration_frame = tk.Frame(control_content, bg=PANEL)
-        duration_frame.pack(fill="x", pady=(10, 8))
+        duration_field = tk.Frame(control_content, bg=PANEL)
+        duration_field.pack(fill="x", pady=(10, 9))
 
         tk.Label(
-            duration_frame,
+            duration_field,
             text="CULTIVATION DURATION (MIN)",
             bg=PANEL,
-            fg=MUTED,
+            fg=DEEP_MUTED,
             font=("Segoe UI", 8, "bold")
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(0, 2))
 
         self.control_minutes_var = getattr(
             self, "control_minutes_var", tk.StringVar(value="25")
         )
 
-        control_minutes_container = tk.Frame(duration_frame, bg=PANEL_ALT)
-        control_minutes_container.pack(fill="x")
-
-        self.control_minutes_entry = tk.Entry(
-            control_minutes_container,
+        self.control_minutes_container, self.control_minutes_entry = self.make_rounded_entry(
+            duration_field,
             textvariable=self.control_minutes_var,
-            bg=PANEL_ALT,
-            fg=TEXT,
-            insertbackground=TEXT,
-            relief="flat",
-            font=("Segoe UI", 9)
-        )
-        
-        self.control_minutes_entry.pack(
-            fill="x",
-            padx=(10, 10),
-            ipady=6
+            fg_color=TEXT,
+            icon_type=None,
+            height=40,
+            radius=12
         )
 
         # Quick duration presets
-        duration_presets = tk.Frame(duration_frame, bg=PANEL)
+        duration_presets = tk.Frame(control_content, bg=PANEL)
         duration_presets.pack(fill="x")
 
         for duration in (5, 10, 25, 30, 45):
@@ -1273,15 +1417,11 @@ class FocusTimer:
                 duration_presets,
                 f"{duration}m",
                 lambda d=duration: self.control_minutes_var.set(str(d)),
-                bg=PANEL_ALT,
-                compact=True
+                bg=BRIGHT_PURPLE,
+                compact=True,
+                font_size=7
             )
-            btn.configure(
-                fg=TEXT,
-                padx=7,
-                pady=3,
-                font=("Segoe UI", 7, "bold")
-            )
+
             btn.pack(side="left", expand=True, fill="x", padx=2)
             
         self.start_button = self.make_button(
@@ -1297,28 +1437,33 @@ class FocusTimer:
         self.stop_button.pack(fill="x", pady=(0, 6))
 
         self.hide_button = self.make_button(
-            control_content, "MINIMIZE",
+            control_content, "➖  MINIMIZE",
             self.minimize_window,
-            PANEL_ALT
+            bg=BRIGHT_PURPLE
         )
-        self.hide_button.configure(fg=TEXT)
         self.hide_button.pack(fill="x")
 
         # endregion
 
         # region Status footer
+        status_frame = tk.Frame(dashboard_tab, bg=BG)
+        status_frame.grid(
+            row=1, column=0, columnspan=2,
+            sticky="ew"
+        )
+
         self.status_label = tk.Label(
-            dashboard_tab,
+            status_frame,
             text="✦  Your cultivation journey awaits.",
             bg=BG,
             fg=MUTED,
             font=("Segoe UI", 8)
         )
-        self.status_label.grid(
-            row=1, column=0, columnspan=2,
-            sticky="w", padx=12, pady=(0, 8)
+        self.status_label.pack(
+            anchor="w",
+            padx=12,
+            pady=6
         )
-
         # endregion
         
         # endregion
@@ -1358,99 +1503,107 @@ class FocusTimer:
         self.mission_rows = {}
 
         status_columns = [
-            ("CURRENT", PURPLE),
-            ("COMPLETED", GREEN),
-            ("POSTPONED", GOLD)
+            ("CURRENT", PURPLE, StarIconColors.PURPLE, True, 10, 0.6),
+            ("COMPLETED", GREEN, StarIconColors.GREEN, False, 6, 0.6),
+            ("POSTPONED", GOLD, StarIconColors.GOLD, True, 10, 0.6),
         ]
 
+        board.grid_rowconfigure(0, weight=1)
+
         self.mission_canvases = {}
-        for col, (status, accent) in enumerate(status_columns):
-            column = tk.Frame(
-                board,
-                bg=PANEL,
-                highlightbackground=BORDER,
-                highlightthickness=1
-            )
-            column.grid(
+        for col, (status, accent, star_color, star_filled, star_radius, star_strength) in enumerate(status_columns):
+            grid_col = tk.Frame(board, bg=BG)
+            grid_col.grid(
                 row=0, column=col, sticky="nsew",
                 padx=4, pady=4
             )
 
-            top = tk.Frame(column, bg=PANEL)
-            top.pack(fill="x", padx=9, pady=9)
+            grid_col.grid_rowconfigure(0, weight=1)
+            grid_col.grid_columnconfigure(0, weight=1)
 
-            tk.Label(
-                top,
-                text=status,
-                bg=PANEL,
-                fg=accent,
-                font=("Segoe UI", 9, "bold")
-            ).pack(side="left")
-
-            # Scrollable mission area
-            scroll_container = tk.Frame(column, bg=PANEL)
-            scroll_container.pack(
-                fill="both", expand=True, padx=7, pady=(0, 8)
+            col_card, column = self.make_card(
+                grid_col, status, None,
+                title_color=accent,
+                icon_type="star",
+                star_color=star_color,
+                star_filled=star_filled,
+                star_glow=(star_radius, star_strength),
+                content_padx=(9, 0),
+                content_pady=(9, 0),
+                expand_height=True
             )
 
+            col_card.pack(fill="both", expand=True, padx=4, pady=4)
+
+            # Scrollable mission area
+            # scroll_container = tk.Frame(column, bg=PANEL)
+            # scroll_container.pack(
+            #     fill="both", expand=True, padx=7, pady=0
+            # )
             mission_canvas = tk.Canvas(
-                scroll_container,
+                column,
                 bg=PANEL,
                 highlightthickness=0
             )
-            mission_canvas.pack(side="left", fill="both", expand=True)
+            # mission_canvas.pack(side="left", fill="both", expand=False)
 
             mission_scrollbar = ttk.Scrollbar(
-                scroll_container,
+                column,
                 orient="vertical",
                 command=mission_canvas.yview,
                 style="Mission.Vertical.TScrollbar"
             )
             mission_scrollbar.pack(side="right", fill="y")
+            mission_canvas.pack(side="left", fill="both", expand=True, padx=(0, 8))
 
             mission_canvas.configure(
                 yscrollcommand=mission_scrollbar.set
             )
-
             # Frame that actually lives inside the Canvas
-            mission_content = tk.Frame(mission_canvas, bg=PANEL)
-
-            # When creating each mission canvas:
-            self.mission_canvases[status.lower()] = mission_canvas
-            mission_window = mission_canvas.create_window(
-                (0, 0),
-                window=mission_content,
-                anchor="nw"
-            )
-
-            # Update scroll region when content changes
-            mission_content.bind(
-                "<Configure>",
-                lambda event: mission_canvas.configure(
-                    scrollregion=mission_canvas.bbox("all")
-                )
-            )
-
-            # Keep embedded Frame as wide as Canvas
-            mission_canvas.bind(
-                "<Configure>",
-                lambda event: mission_canvas.itemconfigure(
-                    mission_window, width=event.width
-                )
-            )
-
             mission_inner = tk.Frame(mission_canvas, bg=PANEL)
+
             mission_window = mission_canvas.create_window(
                 (0, 0),
                 window=mission_inner,
                 anchor="nw"
             )
 
-            self.scroll_on_wheel(mission_canvas, mission_inner) # MISSION BOARD
+            # # Update scroll region when content changes
+            # def update_scroll_region(canvas, st):
+            #     bbox = canvas.bbox("all")
 
-            def update_scrollbar(event=None, canvas=mission_canvas,
-                                inner=mission_inner, scrollbar=mission_scrollbar):
+            #     if bbox:
+            #         state = self._mission_virtual.get(st)
+            #         if state and state.get("mode") == "virtual":
+            #             grouped, today_str = self.current_grouped_missions()
+            #             missions = grouped.get(st, [])
+            #             offset = 10 * len(missions)
+            #             scrollregion = (bbox[0], bbox[1], bbox[2], bbox[3] + offset)
+            #         else:
+            #             scrollregion = canvas.bbox("all")
 
+            #         print(st, "update_scroll_region", scrollregion, state and state.get("mode") == "virtual")
+            #         canvas.configure(
+            #             scrollregion=scrollregion
+            #         )
+                    
+            # mission_inner.bind(
+            #     "<Configure>",
+            #     lambda event, canvas=mission_canvas, st=status: update_scroll_region(canvas, st)
+            # )
+
+            # Keep embedded Frame as wide as Canvas
+            mission_canvas.bind(
+                "<Configure>",
+                lambda event, canvas=mission_canvas, window=mission_window:
+                    canvas.itemconfigure(window, width=event.width)
+            )
+
+            def update_scrollbar(
+                canvas=mission_canvas,
+                inner=mission_inner,
+                scrollbar=mission_scrollbar
+            ):
                 canvas.configure(scrollregion=canvas.bbox("all"))
 
                 content_height = inner.winfo_reqheight()
@@ -1460,24 +1613,22 @@ class FocusTimer:
                     if not scrollbar.winfo_ismapped():
                         scrollbar.pack(side="right", fill="y")
                 else:
-                    scrollbar.pack_forget()
+                    if scrollbar.winfo_ismapped():
+                        scrollbar.pack_forget()
 
-            mission_inner.bind(
-                "<Configure>",
-                update_scrollbar
+            update = lambda: update_scrollbar(
+                mission_canvas, mission_inner, mission_scrollbar
             )
 
-            mission_canvas.bind(
-                "<Configure>",
-                lambda e, c=mission_canvas, w=mission_window:
-                    (
-                        c.itemconfigure(w, width=e.width),
-                        update_scrollbar()
-                    )
-            )
+            self.mission_canvases[status.lower()] = mission_canvas
+            self.mission_rows[status.lower()] = (mission_inner, update)
 
-            self.mission_rows[status.lower()] = mission_inner
+            def update_virtual(event, status=status):
+                state = self._mission_virtual.get(status)
+                if state and state.get("mode") == "virtual" and state.get("layout"):
+                    self.root.after_idle(state["layout"])
 
+            self.scroll_on_wheel(mission_canvas, mission_inner, update_virtual)
 
         # Project and mission actions
         actions = tk.Frame(bounty_tab, bg=BG)
@@ -1494,17 +1645,32 @@ class FocusTimer:
             variable=self.project_var,
             values=lambda: list(self.projects.keys()),
             on_select=self.change_project,
-            menu_attr="project_menu"
+            menu_attr="project_menu",
+            bg="#212247",
+            height=50,
+            width=70
         )
         
         self.make_button(
-            actions, "+ SECT", self.render_add_project_popup,
-            PANEL, fg=TEXT, compact=True
+            actions, "+ SECT", self.render_add_project_popup, colors = {
+                "base_bg": "#212247",
+                "base_bd": "#3C3B69",
+                "base_fg": "#FCE7FF",
+                "highlight_bg": "#3C3B69",
+                "highlight_bd": "#3C3B69",
+                "highlight_fg": "#FCE7FF",
+            }, compact=True, font_size=8, radius = (7, 9), size=(100, 50)
         ).pack(side="left", padx=3)
 
         self.make_button(
-            actions, "EDIT BOUNTIES", self.render_edit_mission_markdown_popup,
-            PANEL, fg=TEXT, compact=True
+            actions, "EDIT BOUNTIES", self.render_edit_mission_markdown_popup, colors = {
+                "base_bg": "#212247",
+                "base_bd": "#3C3B69",
+                "base_fg": "#FCE7FF",
+                "highlight_bg": "#3C3B69",
+                "highlight_bd": "#3C3B69",
+                "highlight_fg": "#FCE7FF",
+            }, compact=True, font_size=8, radius = (7, 9), size=(180, 50)
         ).pack(side="left", padx=3)
 
         # endregion
@@ -1514,11 +1680,11 @@ class FocusTimer:
         # ==========================================================
         chronicle_tab.rowconfigure(0, weight=1)
         chronicle_tab.columnconfigure(0, weight=1)
-
         chronicle_card, chronicle_content = self.make_card(
             chronicle_tab,
             "Cultivation Chronicle",
-            "A record of your completed sessions and progress"
+            "A record of your completed sessions and progress",
+            expand_height=True
         )
 
         chronicle_card.grid(
@@ -1529,7 +1695,7 @@ class FocusTimer:
         # Header action button
         reset_border =  tk.Frame(
             chronicle_card,
-            bg="#b99a63",
+            bg=PANEL,
             padx=2,
             pady=2
         )
@@ -1537,45 +1703,29 @@ class FocusTimer:
         reset_border.place(relx=0.99, y=12, anchor="ne")
 
         # Actual button
-        reset_btn = tk.Button(
+        
+        reset_btn= self.make_button(
             reset_border,
-            text="✦  RESET CULTIVATION",
-            font=("Georgia", 9, "bold"),
-            bg="#171923",
-            fg="#b99a63",
-            activebackground="#292536",
-            activeforeground="#e5c58b",
-            relief="flat",
-            bd=0,
-            highlightthickness=0,
-            cursor="hand2",
-            padx=14,
-            pady=7,
-            command=self.confirm_reset_cultivation
+            "✦  RESET CULTIVATION",
+            command=self.confirm_reset_cultivation,
+            colors={
+                "base_bg": "#171923",
+                "base_text": "#b99a63",
+                "base_bd": "#b99a63",
+                "highlight_bg": "#292536",
+                "highlight_text": "#e5c58b",
+                "highlight_bd": "#e5c58b"
+            },
+            compact=False,
+            font_size=8,
+            radius=(7, 5),
+            highlight=False
         )
+        reset_btn.pack(side="left")
 
-        reset_btn.pack()
-
-        # Subtle hover effect
-        def on_reset_enter(event):
-            reset_btn.configure(
-                bg="#242638",
-                fg="#e6c98e",
-                highlightbackground="#b99a63"
-            )
-
-        def on_reset_leave(event):
-            reset_btn.configure(
-                bg="#171923",
-                fg="#b99a63",
-                highlightbackground="#665337"
-            )
-
-        reset_btn.bind("<Enter>", on_reset_enter)
-        reset_btn.bind("<Leave>", on_reset_leave)
         self.pulse_reset_border(reset_btn)
         
-        chronicle_content.pack_propagate(False)
+        # chronicle_content.pack_propagate(True)
 
         log_frame = tk.Frame(chronicle_content, bg=PANEL)
         log_frame.pack(fill="both", expand=True)
@@ -1601,13 +1751,12 @@ class FocusTimer:
         )
 
         def resize_log(event):
+            content_height = self.log_inner.winfo_reqheight()
+
             self.log_canvas.itemconfigure(
                 self.log_window,
                 width=event.width,
-                height=max(
-                    event.height,
-                    self.log_inner.winfo_reqheight()
-                )
+                height=max(event.height, content_height)
             )
 
         self.log_canvas.bind("<Configure>", resize_log)
@@ -1620,6 +1769,7 @@ class FocusTimer:
         )
 
         # endregion
+     
         # ---------- ANIMATION ----------
         self._accent_animation_id = None
 
@@ -1627,6 +1777,7 @@ class FocusTimer:
             try:
                 if not self.root.winfo_exists():
                     return
+                
                 current = self.rank_label.cget("fg")
                 next_color = GOLD if current == PURPLE else PURPLE
                 self.rank_label.configure(fg=next_color)
@@ -1638,331 +1789,557 @@ class FocusTimer:
 
         animate_accent()
 
-        # ---------- INITIAL REFRESH ----------
-        self.update_xp_display()
-        # self.refresh_missions()
+    def _build_mission_card(self, parent, item, status, today_str):
+        is_daily = item.get("is_daily", False)
+        last_done = item.get("last_done_date")
+        streak = item.get("streak_count", 0)
+        done_today = is_daily and last_done == today_str
 
-    def render_mission_board(self, reset=False):
+        card = tk.Frame(
+            parent, bg="#222A3D",
+            highlightbackground="#65D6A0" if done_today else "#303A52",
+            highlightthickness=1
+        )
+
+        header = tk.Frame(card, bg="#222A3D")
+        header.pack(fill="x", padx=8, pady=(7, 3))
+
+        tk.Label(
+            header, text=item.get("task"),
+            bg="#222A3D", fg="#E8EAF2",
+            font=("Segoe UI", 9, "bold"),
+            anchor="w", wraplength=500, justify="left"
+        ).pack(side="left", fill="x", expand=True)
+
+        if is_daily:
+            badge_text, badge_bg, badge_fg = (
+                "♻ DAILY", "#244D43", "#65D6A0"
+            )
+        else:
+            badge_text, badge_bg, badge_fg = (
+                "◆ STANDARD", "#293B5B", "#91B9FF"
+            )
+
+        self.make_button(
+            header, badge_text,
+            colors={
+                "base_bg": badge_bg,
+                "base_text": badge_fg,
+                "base_bd": badge_bg
+            },
+            compact=False, font_size=7,
+            size=(100, 34), radius=(12, 10), badge=True
+        ).pack(side="left", padx=(4, 0), pady=3)
+
+        tk.Frame(card, bg="#354057", height=1).pack(
+            fill="x", padx=8, pady=3
+        )
+
+        details = tk.Frame(card, bg="#222A3D")
+        details.pack(fill="x", padx=8, pady=3)
+
+        tk.Label(
+            details, text=f"◷ {item.get('duration', 45)} min",
+            bg="#222A3D", fg="#AAB0C0",
+            font=("Segoe UI", 8)
+        ).pack(side="left")
+
+        tk.Label(
+            details, text=f"✦ {item.get('reward_xp', 0)} XP",
+            bg="#222A3D", fg="#F5C66A",
+            font=("Segoe UI", 8, "bold")
+        ).pack(side="right")
+
+        if is_daily:
+            streak_frame = tk.Frame(
+                card, bg="#302B43",
+                highlightbackground="#51446F",
+                highlightthickness=1
+            )
+            streak_frame.pack(fill="x", padx=7, pady=(5, 4))
+
+            streak_header = tk.Frame(streak_frame, bg="#302B43")
+            streak_header.pack(fill="x", padx=7, pady=(5, 2))
+
+            tk.Label(
+                streak_header, text="🔥 CULTIVATION STREAK",
+                bg="#302B43", fg="#F5C66A",
+                font=("Segoe UI", 7, "bold")
+            ).pack(side="left")
+
+            self.make_button(
+                streak_header, f"{streak} DAYS",
+                colors={
+                    "base_bg": "#51412E",
+                    "base_text": "#F5D98A",
+                    "base_bd": "#51412E"
+                },
+                compact=False, font_size=7,
+                size=(80, 28), radius=(12, 10), badge=True
+            ).pack(side="right", padx=6, pady=2)
+
+            completion_text = (
+                "✓ COMPLETED TODAY" if done_today
+                else "○ AVAILABLE TODAY"
+            )
+            completion_color = "#65D6A0" if done_today else "#BDB5D5"
+            completion_bg = "#1E493B" if done_today else "#39334D"
+
+            self.make_button(
+                streak_frame, completion_text,
+                colors={
+                    "base_bg": completion_bg,
+                    "base_text": completion_color,
+                    "base_bd": completion_bg
+                },
+                compact=False, center_content=False,
+                font_size=8, size=(80, 45),
+                radius=(7, 5), badge=True
+            ).pack(fill="x", padx=6, pady=(2, 5))
+
+            tk.Label(
+                streak_frame,
+                text=f"Last completed: {last_done or 'Never'}",
+                bg="#302B43",
+                fg="#65D6A0" if done_today else "#929BB2",
+                font=("Segoe UI", 7), anchor="w"
+            ).pack(fill="x", padx=7, pady=(0, 6))
+
+        elif status == "completed":
+            tk.Label(
+                card,
+                text=f"✓ Completed: {item.get('completed_date', 'Unknown')}",
+                bg="#222A3D", fg="#65D6A0",
+                font=("Segoe UI", 7), anchor="w"
+            ).pack(fill="x", padx=8, pady=4)
+
+        buttons = tk.Frame(card, bg="#222A3D")
+        buttons.pack(fill="x", padx=5, pady=(5, 7))
+
+        if status == "current":
+            self.make_button(
+                buttons, "COMPLETE",
+                command=lambda m=item: self.change_mission_status(m, "completed"),
+                colors={
+                    "base_bg": "#65D6A0", "base_text": "#10131D",
+                    "base_bd": "#65D6A0", "highlight_bg": "#5ABC8D",
+                    "highlight_text": "#10131D", "highlight_bd": "#5ABC8D"
+                },
+                compact=False, font_size=7, size=(100, 34),
+                radius=(7, 5)
+            ).pack(side="left", padx=2, pady=3)
+
+            self.make_button(
+                buttons, "POSTPONE",
+                command=lambda m=item: self.change_mission_status(m, "postponed"),
+                colors={
+                    "base_bg": "#F5C66A", "base_text": "#10131D",
+                    "base_bd": "#F5C66A", "highlight_bg": "#C19D55",
+                    "highlight_text": "#10131D", "highlight_bd": "#C19D55"
+                },
+                compact=False, font_size=7, size=(100, 34),
+                radius=(7, 5)
+            ).pack(side="left", padx=2, pady=3)
+
+        elif done_today:
+            tk.Label(
+                buttons, text="✦ BOUNTY CLAIMED",
+                bg="#222A3D", fg="#65D6A0",
+                font=("Segoe UI", 7, "bold")
+            ).pack(side="left", padx=3)
+
+            self.make_button(
+                buttons, "⟲ UNDO",
+                command=lambda m=item: self.undo_daily_completion(m),
+                colors={
+                    "base_bg": "#D69A65", "base_text": "#10131D",
+                    "base_bd": "#D69A65", "highlight_bg": "#D18B4D",
+                    "highlight_text": "#10131D", "highlight_bd": "#D18B4D"
+                },
+                compact=False, font_size=7, size=(80, 34),
+                radius=(7, 5)
+            ).pack(side="left", padx=2, pady=3)
+
+        else:
+            self.make_button(
+                buttons, "RESTORE",
+                command=lambda m=item: self.change_mission_status(m, "current"),
+                colors={
+                    "base_bg": "#A78BFA", "base_text": "#10131D",
+                    "base_bd": "#A78BFA", "highlight_bg": "#926FFA",
+                    "highlight_text": "#10131D", "highlight_bd": "#926FFA"
+                },
+                compact=False, font_size=7, size=(165, 34),
+                radius=(7, 5)
+            ).pack(side="left", padx=2, pady=3)
+
+        if is_daily and streak > 0:
+            self.make_button(
+                buttons, "RESET STREAK",
+                command=lambda m=item, d=done_today: self.reset_daily_streak(m, d),
+                colors={
+                    "base_bg": "#402144", "base_text": "#F57D6A",
+                    "base_bd": "#F57D6A", "highlight_bg": "#402144",
+                    "highlight_text": "#F1634D", "highlight_bd": "#F1634D"
+                },
+                compact=False, font_size=7, size=(110, 34),
+                radius=(7, 5)
+            ).pack(side="left", padx=2, pady=3)
+
+        self.make_button(
+            buttons, "✕ DELETE",
+            command=lambda m=item: self.confirm_remove_mission(m),
+            colors={
+                "base_bg": "#402144", "base_text": "#EC6275",
+                "base_bd": "#EC6275", "highlight_bg": "#402144",
+                "highlight_text": "#E86969", "highlight_bd": "#E86969"
+            },
+            compact=False, font_size=7, size=(120, 34),
+            radius=(7, 5)
+        ).pack(side="right", padx=2, pady=3)
+
+        return card
+    
+    # region MISSION BOARD RENDERER
+    def render_mission_board(self, reset_scroll=False):
         self.refresh_project_picker()
-        self.update_next_cultivation_display()
-        scroll_positions = {}
-
-        for status, container in self.mission_rows.items():
-            canvas = self.mission_canvases[status]
-            if not reset:
-                scroll_positions[status] = canvas.yview()[0]
-            else:
-                scroll_positions[status] = 0
-        
-        # Clear columns
-        for container in self.mission_rows.values():
-            for child in container.winfo_children():
-                child.destroy()
+        self.schedule_update(
+            "dashboard",
+            "ui_update_next_cultivation_display"
+        )
 
         grouped, today_str = self.current_grouped_missions()
+        for status in self.mission_rows.keys():
+            missions = grouped.get(status, [])
 
-        # Render columns
-        for status, container in self.mission_rows.items():
-            status_missions = grouped[status]
-
-            if not status_missions:
-                tk.Label(
-                    container,
-                    text="No bounties here",
-                    bg="#1A2030",
-                    fg="#929BB2",
-                    font=("Segoe UI", 8, "italic")
-                ).pack(pady=12)
-                continue
-
-            for item in status_missions:
-                is_daily = item.get("is_daily", False)
-                last_done = item.get("last_done_date")
-                streak = item.get("streak_count", 0)
-
-                done_today = (
-                    is_daily and last_done == today_str
+            mission_canvas = self.mission_canvases[status]
+            mission_row = self.mission_rows[status]
+            
+            if len(missions) <= 15:
+                self._render_mission_board_normal(
+                    status, missions, today_str, mission_canvas, mission_row, reset_scroll
                 )
 
-                # Card
-                card = tk.Frame(
-                    container,
-                    bg="#222A3D",
-                    highlightbackground=(
-                        "#65D6A0" if done_today
-                        else "#8B72DC" if is_daily
-                        else "#303A52"
-                    ),
-                    highlightthickness=1
+                state = self._mission_virtual.setdefault(status, {})
+                state["mode"] = "normal"
+            else:
+                self._render_mission_board_virtual(
+                    status, missions, today_str, mission_canvas, mission_row, reset_scroll
                 )
-                card.pack(fill="x", pady=4)
-
-                # Mission header
-                header = tk.Frame(card, bg="#222A3D")
-                header.pack(fill="x", padx=8, pady=(7, 3))
-
-                tk.Label(
-                    header,
-                    text=item.get("task"),
-                    bg="#222A3D",
-                    fg="#E8EAF2",
-                    font=("Segoe UI", 9, "bold"),
-                    anchor="w",
-                    wraplength=170,
-                    justify="left"
-                ).pack(side="left", fill="x", expand=True)
-
-                # Mission type badge
-                if is_daily:
-                    badge_text = "♻ DAILY"
-                    badge_bg = "#244D43"
-                    badge_fg = "#65D6A0"
-                else:
-                    badge_text = "◆ STANDARD"
-                    badge_bg = "#293B5B"
-                    badge_fg = "#91B9FF"
-
-                tk.Label(
-                    header,
-                    text=badge_text,
-                    bg=badge_bg,
-                    fg=badge_fg,
-                    font=("Segoe UI", 7, "bold"),
-                    padx=6,
-                    pady=3
-                ).pack(side="right", padx=(4, 0))
-
-                # Divider
-                tk.Frame(
-                    card,
-                    bg="#354057",
-                    height=1
-                ).pack(fill="x", padx=8, pady=3)
-
-                # Duration and reward
-                details = tk.Frame(card, bg="#222A3D")
-                details.pack(fill="x", padx=8, pady=3)
-
-                tk.Label(
-                    details,
-                    text=f"◷ {item.get('duration', 45)} min",
-                    bg="#222A3D",
-                    fg="#AAB0C0",
-                    font=("Segoe UI", 8)
-                ).pack(side="left")
-
-                tk.Label(
-                    details,
-                    text=f"✦ {item.get('reward_xp', 0)} XP",
-                    bg="#222A3D",
-                    fg="#F5C66A",
-                    font=("Segoe UI", 8, "bold")
-                ).pack(side="right")
-
-                # Daily streak section
-                if is_daily:
-                    streak_frame = tk.Frame(
-                        card,
-                        bg="#302B43",
-                        highlightbackground="#51446F",
-                        highlightthickness=1
-                    )
-                    streak_frame.pack(
-                        fill="x",
-                        padx=7,
-                        pady=(5, 4)
-                    )
-
-                    # Streak header
-                    streak_header = tk.Frame(
-                        streak_frame,
-                        bg="#302B43"
-                    )
-                    streak_header.pack(
-                        fill="x",
-                        padx=7,
-                        pady=(5, 2)
-                    )
-
-                    tk.Label(
-                        streak_header,
-                        text="🔥 CULTIVATION STREAK",
-                        bg="#302B43",
-                        fg="#F5C66A",
-                        font=("Segoe UI", 7, "bold")
-                    ).pack(side="left")
-
-                    tk.Label(
-                        streak_header,
-                        text=f"{streak} DAYS",
-                        bg="#51412E",
-                        fg="#F5D98A",
-                        font=("Segoe UI", 7, "bold"),
-                        padx=6,
-                        pady=2
-                    ).pack(side="right")
-
-                    # Last completion status
-                    if done_today:
-                        completion_text = "✓ COMPLETED TODAY"
-                        completion_color = "#65D6A0"
-                        completion_bg = "#1E493B"
-                    else:
-                        completion_text = "○ AVAILABLE TODAY"
-                        completion_color = "#BDB5D5"
-                        completion_bg = "#39334D"
-
-                    tk.Label(
-                        streak_frame,
-                        text=completion_text,
-                        bg=completion_bg,
-                        fg=completion_color,
-                        font=("Segoe UI", 8, "bold"),
-                        anchor="w",
-                        padx=7,
-                        pady=5
-                    ).pack(fill="x", padx=6, pady=(2, 5))
-
-                    # Last done date
-                    last_done_text = (
-                        f"Last completed: {last_done}"
-                        if last_done
-                        else "Last completed: Never"
-                    )
-
-                    tk.Label(
-                        streak_frame,
-                        text=last_done_text,
-                        bg="#302B43",
-                        fg="#65D6A0" if done_today else "#929BB2",
-                        font=("Segoe UI", 7),
-                        anchor="w"
-                    ).pack(fill="x", padx=7, pady=(0, 6))
-
-                # Normal completed mission date
-                elif status == "completed":
-                    completed_date = item.get(
-                        "completed_date", "Unknown"
-                    )
-
-                    tk.Label(
-                        card,
-                        text=f"✓ Completed: {completed_date}",
-                        bg="#222A3D",
-                        fg="#65D6A0",
-                        font=("Segoe UI", 7),
-                        anchor="w"
-                    ).pack(fill="x", padx=8, pady=4)
-
-                # Action buttons
-                buttons = tk.Frame(card, bg="#222A3D")
-                buttons.pack(fill="x", padx=5, pady=(5, 7))
-
-                if status == "current":
-                    tk.Button(
-                        buttons,
-                        text="COMPLETE",
-                        command=lambda m=item: self.change_mission_status(
-                            m, "completed"
-                        ),
-                        bg="#65D6A0",
-                        fg="#10131D",
-                        relief="flat",
-                        cursor="hand2",
-                        font=("Segoe UI", 7, "bold"),
-                        padx=7,
-                        pady=3
-                    ).pack(side="left", padx=2)
-
-                    tk.Button(
-                        buttons,
-                        text="POSTPONE",
-                        command=lambda m=item: self.change_mission_status(
-                            m, "postponed"
-                        ),
-                        bg="#F5C66A",
-                        fg="#10131D",
-                        relief="flat",
-                        cursor="hand2",
-                        font=("Segoe UI", 7, "bold"),
-                        padx=7,
-                        pady=3
-                    ).pack(side="left", padx=2)
-                else:
-                    if done_today:
-                        tk.Label(
-                            buttons,
-                            text="✦ BOUNTY CLAIMED",
-                            bg="#222A3D",
-                            fg="#65D6A0",
-                            font=("Segoe UI", 7, "bold")
-                        ).pack(side="left", padx=3)
-
-                        # Undo today's daily completion
-                        tk.Button(
-                            buttons,
-                            text="↶ UNDO COMPLETION",
-                            command=lambda m=item: self.undo_daily_completion(m),
-                            bg="#D69A65",
-                            fg="#10131D",
-                            relief="flat",
-                            cursor="hand2",
-                            font=("Segoe UI", 7, "bold"),
-                            padx=7,
-                            pady=3
-                        ).pack(side="left", padx=2)
-                    else:
-                        tk.Button(
-                            buttons,
-                            text="RESTORE",
-                            command=lambda m=item: self.change_mission_status(
-                                m, "current"
-                            ),
-                            bg="#A78BFA",
-                            fg="#10131D",
-                            relief="flat",
-                            cursor="hand2",
-                            font=("Segoe UI", 7, "bold"),
-                            padx=7,
-                            pady=3
-                        ).pack(side="left", padx=2)
                 
-                # Reset streak only when there is a streak
-                if is_daily and streak > 0:
-                    tk.Button(
-                        buttons,
-                        text="RESET STREAK",
-                        command=lambda m=item: self.reset_daily_streak(m, done_today),
-                        bg="#F57D6A",
-                        fg="#10131D",
-                        relief="flat",
-                        cursor="hand2",
-                        font=("Segoe UI", 7, "bold"),
-                        padx=7,
-                        pady=3
-                    ).pack(side="left", padx=2)
+    def _render_mission_board_virtual(
+            self, status, missions, today_str, canvas, mission_row, reset_scroll=False
+    ):
+        # Render each column normally.
+        inner, update = mission_row
+        old_state = self._mission_virtual.get(status)
 
-                tk.Button(
-                    buttons,
-                    text="✕ DELETE",
-                    command=lambda m=item: self.confirm_remove_mission(m),
-                    bg="#E87979",
-                    fg="#10131D",
-                    relief="flat",
-                    cursor="hand2",
-                    font=("Segoe UI", 7, "bold"),
-                    padx=7,
-                    pady=3
-                ).pack(side="right", padx=2)
+        if reset_scroll or old_state is None:
+            saved_position = 0
+        else:
+            saved_position = canvas.yview()[0]
+
+        # Clear the previous render once, not while scrolling.
+        for child in inner.winfo_children():
+            child.destroy()
+
+        state = {
+            "missions": missions,
+            "today": today_str,
+            "pool": [],
+            "heights": {},
+            "refresh_id": None,
+            "last_view": None,
+            "inner": inner,
+            "position": saved_position,
+            "mode": "virtual"
+        }
+
+        self._mission_virtual[status] = state
+
+        def get_height(index, s=state):
+            if index in s["heights"]:
+                return s["heights"][index]
+
+            item = s["missions"][index]
+            if item.get("is_daily"):
+                return 297 if status.lower() == "completed" else 297
+            else:
+                return 177 if status.lower() == "completed" else 144
+
+        def measure_new_cards(slots, st=status):
+            s = self._mission_virtual[st]
+            changed = False
+
+            for slot in slots:
+                index = getattr(slot, "_mission_index", None)
+                if index is None:
+                    continue
+
+                slot.update_idletasks()
+                actual_height = slot.winfo_reqheight() + 20
+
+                if actual_height > 8 and s["heights"][index] != actual_height:
+                    s["heights"][index] = actual_height
+                    changed = True
+
+            if changed:
+                layout(st, preserve_top=True)
+
+        def rebuild_mission_layout_cache(s, get_height):
+            missions = s["missions"]
+            card_gap = 10
+
+            heights = [get_height(i, s) for i in range(len(missions))]
+
+            positions = []
+            total_height = 0
+
+            for height in heights:
+                positions.append(total_height)
+                total_height += height + card_gap
+
+            s["heights"] = heights
+            s["positions"] = positions
+            s["total_height"] = total_height
+            s["last_visible"] = None   
+ 
+        def layout(st=status, preserve_top=False):
+            s = self._mission_virtual[st]
+            c = self.mission_canvases[st]
+            missions = s["missions"]
+            # print(st, "stored mission count:", len(s["missions"]))
+
+            if not missions:
+                return
+
+            width = max(c.winfo_width(), 1)
+            viewport = max(c.winfo_height(), 1)
+
+            # Rebuild cache only when needed.
+            if (
+                s.get("heights") is None
+                or s.get("cached_width") != width
+                or len(s["heights"]) != len(missions)
+            ):
+                rebuild_mission_layout_cache(s, get_height)
+                s["cached_width"] = width
+
+            heights = s["heights"]
+            positions = s["positions"]
+            total_height = max(s["total_height"], viewport)
+
+            if preserve_top:
+                old_top = c.canvasy(0)
+            else:
+                old_top = None
+
+            s["inner"].configure(
+                width=width,
+                height=total_height
+            )
+
+            c.configure(
+                scrollregion=(0, 0, width, total_height)
+            )
+
+            if old_top is not None:
+                max_scroll = max(total_height - viewport, 1)
+                c.yview_moveto(
+                    min(old_top / max_scroll, 1)
+                )
+
+            top = c.canvasy(0)
+            bottom = top + viewport
+
+            # Find the visible range.
+            first = 0
+
+            while (
+                first < len(missions)
+                and positions[first] + get_height(first, s) < top
+            ):
+                first += 1
+
+            start = max(0, first - 2)
+            end = start
+
+            while end < len(missions):
+                if positions[end] > bottom + 300:
+                    break
+                end += 1
+
+            visible_indices = list(range(start, end))
+            if visible_indices == s.get("last_visible"):
+                return
+
+            s["last_visible"] = visible_indices
+            # print(st, start, end)
+
+            # Reuse existing slots whenever possible.
+            used_slots = set()
+            new_slots = []
+
+            # print(st, "visible:", visible_indices, len(s["missions"]))
+            for index in visible_indices:
+                slot = next(
+                    (
+                        candidate
+                        for candidate in s["pool"]
+                        if candidate not in used_slots
+                        and getattr(candidate, "_mission_index", None) == index
+                    ),
+                    None
+                )
+
+                if slot is None:
+                    slot = next(
+                        (
+                            candidate
+                            for candidate in s["pool"]
+                            if candidate not in used_slots
+                        ),
+                        None
+                    )
+
+                if slot is None:
+                    slot = tk.Frame(s["inner"], bg="#222A3D")
+                    s["pool"].append(slot)
+
+                used_slots.add(slot)
+
+                assigned_index = getattr(
+                    slot, "_mission_index", None
+                )
+
+                if assigned_index != index:
+                    for child in slot.winfo_children():
+                        child.destroy()
+
+                    card = self._build_mission_card(
+                        slot,
+                        missions[index],
+                        st,
+                        s["today"]
+                    )
+                    card.pack(fill="both", expand=True)
+
+                    slot._mission_index = index
+                    slot._mission_measured = False
+                    new_slots.append(slot)
+
+                slot.place(
+                    x=0,
+                    y=positions[index],
+                    width=width,
+                    height=get_height(index, s),
+                    anchor="nw"
+                )
+                # print(st, index, positions[index], get_height(index, s))
+
+            # Hide unused slots without destroying them.
+            for slot in s["pool"]:
+                if slot not in used_slots:
+                    slot.place_forget()
+
+            if new_slots:
+                self.root.after_idle(
+                    lambda slots=new_slots, st=status:
+                        measure_new_cards(slots, st)
+                )
+
+        # Connect Canvas scrolling to the virtualizer.
+        scrollbar = next(
+            (
+                widget
+                for widget in canvas.master.winfo_children()
+                if isinstance(widget, ttk.Scrollbar)
+            ),
+            None
+        )
+
+        def on_yview(first, last, sb=scrollbar):
+            if sb:
+                sb.set(first, last)
+
+        canvas.configure(yscrollcommand=on_yview)
+
+        if scrollbar:
+            def scroll_canvas(*args, c=canvas, st=status):
+                c.yview(*args)
+                self.root.after_idle(
+                    lambda: self._mission_virtual[st]["layout"]()
+                )
+
+            scrollbar.configure(command=scroll_canvas)
+
+        # Store the latest layout callback for this column.
+        self._mission_virtual[status]["layout"] = layout
+
+        # Bind events only once per canvas.
+        if not getattr(canvas, "_mission_events_bound", False):
+            def on_canvas_resize(event, c=canvas):
+                state = self._mission_virtual.get(status)
+                if state and state.get("layout"):
+                    self.root.after_idle(state["layout"])
+
+            canvas.bind("<Configure>", on_canvas_resize, add="+")
+            canvas._mission_events_bound = True
+
+        # Restore this column's scroll position.
+        canvas.yview_moveto(saved_position)
+
+        layout(status)
+        update()
+   
+    def _render_mission_board_normal(
+        self, status, missions, today_str, canvas, mission_row, reset_scroll=False
+    ):
+        # Save each column's scroll position.
+        scroll_position = 0 if reset_scroll else canvas.yview()[0]
+
+        # Render each column normally.
+        container, update = mission_row
+
+        # Remove previous cards.
+        for child in container.winfo_children():
+            child.destroy()
+
+        if not missions:
+            tk.Label(
+                container,
+                text="No bounties here",
+                bg="#1A2030",
+                fg="#929BB2",
+                font=("Segoe UI", 8, "italic")
+            ).pack(pady=12)
+
+        for item in missions:
+            card = self._build_mission_card(
+                container,
+                item,
+                status,
+                today_str
+            )
+
+            card.pack(
+                fill="x",
+                expand=False,
+                pady=4
+            )
+            card.update_idletasks()
+            card_height = card.winfo_height()
+
+        update()
 
         def restore_scroll():
-            for status, position in scroll_positions.items():
-                canvas = self.mission_canvases[status]
-                canvas.update_idletasks()
-                canvas.configure(scrollregion=canvas.bbox("all"))
-                canvas.yview_moveto(position)
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.yview_moveto(scroll_position)
 
         self.root.after_idle(restore_scroll)
+  
+    # endregion
 
     def render_mission_log(self):
         for child in self.log_inner.winfo_children():
@@ -1988,10 +2365,12 @@ class FocusTimer:
             project = entry.get("project")
 
             if project is not None:
-                latest_bounties[project] = entry
+                latest_bounties.setdefault(project, []).append(entry)
 
         today_bounties = sum(
-            1 for entry in latest_bounties.values()
+            1
+            for entries in latest_bounties.values()
+            for entry in entries
             if entry.get("status") == "COMPLETED"
             and str(entry.get("date", "")).startswith(today.isoformat())
         )
@@ -2073,7 +2452,7 @@ class FocusTimer:
         # ==============================
         history_container = tk.Frame(
             self.log_inner,
-            bg="#171a27"
+            bg=PANEL
         )
         history_container.pack(
             fill="both",
@@ -2085,44 +2464,46 @@ class FocusTimer:
        # Header stays fixed
         header_frame = tk.Frame(
             history_container,
-            bg="#171a27"
+            bg=PANEL
         )
         header_frame.pack(fill="x", padx=8, pady=(4, 8))
 
         tk.Label(
             header_frame,
-            text="CULTIVATION HISTORY",
+            text="HISTORY",
             font=("Segoe UI", 9, "bold"),
             fg="#f0f0f5",
-            bg="#171a27"
+            bg=PANEL
         ).pack(side="left")
 
-        clear_log_btn = tk.Button(
+        self.make_button(
             header_frame,
-            text="Clear History",
-            font=("Segoe UI", 8, "bold"),
-            fg="#ff8b8b",
-            bg="#292333",
-            activeforeground="#ffffff",
-            activebackground="#a83246",
-            relief="flat",
-            bd=0,
-            padx=12,
-            pady=4,
-            cursor="hand2",
-            command=self.confirm_clear_history
-        )
-        clear_log_btn.pack(side="right")
+            "Clear History",
+            command=self.confirm_clear_history,
+            colors={
+                "base_bg": "#292333",
+                "base_text": "#ff8b8b",
+                "base_bd": "#ff8b8b",
+                "highlight_bg": "#292333",
+                "highlight_text": "#a83246",
+                "highlight_bd": "#a83246"
+            },
+            compact=False,
+            font_size=7,
+            size = (150, 45),
+            radius=(10, 8)
+        ).pack(side="right", padx=12, pady=(6, 4))
+        
 
         # ==============================
         # SCROLLABLE MISSION LIST
         # ==============================
-        list_frame = tk.Frame(history_container, bg="#171a27")
+        list_frame = tk.Frame(history_container, bg=PANEL)
         list_frame.pack(fill="both", expand=True)
 
         mission_canvas = tk.Canvas(
             list_frame,
-            bg="#171a27",
+            bg=PANEL,
             highlightthickness=0
         )
 
@@ -2133,186 +2514,754 @@ class FocusTimer:
             style="Mission.Vertical.TScrollbar"
         )
 
-        mission_canvas.configure(yscrollcommand=mission_scrollbar.set)
-
         mission_scrollbar.pack(side="right", fill="y")
         mission_canvas.pack(side="left", fill="both", expand=True)
 
-        # Frame that holds the actual mission items
-        mission_inner = tk.Frame(mission_canvas, bg="#171a27")
-        mission_window = mission_canvas.create_window(
-            (0, 0),
-            window=mission_inner,
-            anchor="nw"
+        mission_canvas.configure(
+            yscrollcommand=mission_scrollbar.set
         )
 
-        def update_scroll_region(event=None):
+        # Fonts
+        task_font = tkfont.Font(
+            family="Segoe UI", size=9, weight="bold"
+        )
+        normal_font = tkfont.Font(
+            family="Segoe UI", size=9
+        )
+        small_font = tkfont.Font(
+            family="Segoe UI", size=7
+        )
+        badge_font = tkfont.Font(
+            family="Segoe UI", size=7, weight="bold"
+        )
+        xp_font = tkfont.Font(
+            family="Segoe UI", size=8, weight="bold"
+        )
+
+        # ==============================
+        # TEXT WRAPPING
+        # ==============================
+        def wrap_text(text, font, max_width):
+            words = str(text).split()
+            lines = []
+            current = ""
+
+            for word in words:
+                candidate = f"{current} {word}".strip()
+
+                if current and font.measure(candidate) > max_width:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = candidate
+
+            if current:
+                lines.append(current)
+
+            return lines or [""]
+
+
+        # ==============================
+        # PREPARE CARD POSITIONS
+        # ==============================
+        card_layouts = []
+
+        CARD_HEIGHT = 34
+        PROJECT_BADGE_HEIGHT = 25
+        FOOTER_Y_UP_PADDING = 31 # the lower the higher actually lol
+        MISSION_TYPE_BADGE_HEIGHT = 25
+        MISSION_STATUS_BADGE_HEIGHT = 25
+        XP_BADGE_HEIGHT = 25
+
+        def prepare_layout():
+            card_layouts.clear()
+
+            width = max(200, mission_canvas.winfo_width())
+            card_width = width - 8
+
+            y = 4
+
+            for entry in self.history:
+                status = str(entry.get("status", ""))
+                mission_type = str(
+                    entry.get("type", "GENERAL")
+                ).upper()
+
+                accent = {
+                    "COMPLETED": "#65cb91",
+                    "BONUS": "#ff8ccf",
+                    "SKIPPED": "#696969",
+                    "PARTIALLY COMPLETED": "#e5b85c"
+                }.get(status, "#e5b85c")
+
+                task = entry.get("task")
+                project = entry.get("project")
+
+                task_lines = (
+                    wrap_text(task, task_font, 330)
+                    if task is not None and mission_type != "SESSION"
+                    else wrap_text(task, task_font, 380)
+                    if task is not None
+                    else []
+                )
+
+                top_height = max(
+                    18,
+                    len(task_lines) * 15
+                )
+
+                # CARD HEIGHT
+                card_height = 22 + top_height + CARD_HEIGHT
+
+                card_layouts.append({
+                    "entry": entry,
+                    "y": y,
+                    "height": card_height,
+                    "width": card_width,
+                    "status": status,
+                    "accent": accent,
+                    "mission_type": mission_type,
+                    "task_lines": task_lines,
+                    "project": project
+                })
+
+                y += card_height + 6
+
+            total_height = max(y + 4, mission_canvas.winfo_height())
+
             mission_canvas.configure(
-                scrollregion=mission_canvas.bbox("all")
+                scrollregion=(0, 0, width, total_height)
             )
 
-        mission_inner.bind("<Configure>", update_scroll_region)
 
-        mission_canvas.bind(
-            "<Configure>",
-            lambda event: mission_canvas.itemconfigure(
-                mission_window, width=event.width
-            )
-        )
+        # ==============================
+        # DRAW VISIBLE CARDS ONLY
+        # ==============================
+        def draw_visible_cards():
+            mission_canvas.delete("mission_card")
 
-        self.scroll_on_wheel(mission_canvas, mission_inner) # MISSION LOG
+            top = mission_canvas.canvasy(0)
+            bottom = top + mission_canvas.winfo_height()
 
-        mission_list = tk.Frame(mission_canvas, bg="#171a27")
+            for item in card_layouts:
+                y = item["y"]
+                height = item["height"]
 
-        mission_window = mission_canvas.create_window(
-            (0, 0),
-            window=mission_list,
-            anchor="nw"
-        )
+                # Skip cards outside the visible area
+                if y + height < top - 100 or y > bottom + 100:
+                    continue
 
-        mission_canvas.bind(
-            "<Configure>",
-            lambda e: mission_canvas.itemconfigure(
-                mission_window,
-                width=e.width
-            )
-        )
+                entry = item["entry"]
+                status = item["status"]
+                mission_type = item["mission_type"]
+                accent = item["accent"]
 
-        mission_list.bind(
-            "<Configure>",
-            lambda e: mission_canvas.configure(
-                scrollregion=mission_canvas.bbox("all")
-            )
-        )
+                x = 4
+                width = item["width"]
+
+                # Card background
+                mission_canvas.create_rectangle(
+                    x, y, x + width, y + height,
+                    fill="#242638",
+                    outline="#393d54",
+                    width=1,
+                    tags="mission_card"
+                )
+
+                # Project badge
+                current_x = x + 10
+                
+                
+                if item["project"] is not None:
+                    project_text = f" {item['project']} "
+                    project_width = badge_font.measure(project_text)
+                    
+                    mission_canvas.create_rectangle(
+                        current_x, y + 10,
+                        current_x + project_width + 8, y + PROJECT_BADGE_HEIGHT + 8,
+                        fill="#393052",
+                        outline="",
+                        tags="mission_card"
+                    )
+
+                    mission_canvas.create_text(
+                        current_x + 4, y + 12,
+                        text=project_text,
+                        anchor="nw",
+                        font=badge_font,
+                        fill="#fff39a",
+                        tags="mission_card"
+                    )
+
+                    current_x += project_width + 15
+
+                # Task title
+                task = entry.get("task")
+
+                if task is not None:
+                    if mission_type != "SESSION":
+                        mission_canvas.create_text(
+                            current_x, y + 8,
+                            text="Task: ",
+                            anchor="nw",
+                            font=normal_font,
+                            fill="#9298aa",
+                            tags="mission_card"
+                        )
+                        current_x += normal_font.measure("Task: ")
+
+                    for index, line in enumerate(item["task_lines"]):
+                        mission_canvas.create_text(
+                            current_x,
+                            y + 8 + index * 15,
+                            text=line,
+                            anchor="nw",
+                            font=task_font,
+                            fill="#f0f0f5",
+                            tags="mission_card"
+                        )
+
+                # Date and duration
+                duration = entry.get("duration", 0)
+
+                duration_text = (
+                    f"{duration}m"
+                    if isinstance(duration, int) and duration >= 1
+                    else duration
+                    if isinstance(duration, str)
+                    else None
+                )
+
+                date_text = str(entry.get("date", "—"))
+
+                if duration_text is not None:
+                    date_text += f"  ·  {duration_text}"
+
+                mission_canvas.create_text(
+                    x + width - 10,
+                    y + 9,
+                    text=date_text,
+                    anchor="ne",
+                    font=small_font,
+                    fill="#aab0c0",
+                    tags="mission_card"
+                )
+
+                # Bottom information row (FOOTER)
+                details_y = y + height - FOOTER_Y_UP_PADDING
+
+                # Mission type badge
+                type_text = f" {mission_type} "
+                type_width = badge_font.measure(type_text)
+
+                mission_canvas.create_rectangle(
+                    x + 10, details_y,
+                    x + 10 + type_width + 8, details_y + MISSION_TYPE_BADGE_HEIGHT,
+                    fill="#393052",
+                    outline="",
+                    tags="mission_card"
+                )
+
+                mission_canvas.create_text(
+                    x + 14, details_y + 2,
+                    text=type_text,
+                    anchor="nw",
+                    font=badge_font,
+                    fill="#b99aff",
+                    tags="mission_card"
+                )
+
+                # Status badge
+                status_text = f"  ✦ {status.replace('_', ' ')}  "
+                status_width = badge_font.measure(status_text)
+
+                status_x = x + 10 + type_width + 14
+
+                mission_canvas.create_rectangle(
+                    status_x, details_y,
+                    status_x + status_width + 8, details_y + MISSION_STATUS_BADGE_HEIGHT,
+                    fill="#303348",
+                    outline="",
+                    tags="mission_card"
+                )
+
+                mission_canvas.create_text(
+                    status_x + 4, details_y + 2,
+                    text=status_text,
+                    anchor="nw",
+                    font=badge_font,
+                    fill=accent,
+                    tags="mission_card"
+                )
+
+                # XP badge
+                xp = entry.get("xp", 0)
+
+                xp_text = f"✧  {'' if xp < 0 else '+' if xp > 0 else ''}{xp} XP"
+                xp_width = xp_font.measure(xp_text)
+
+                xp_x = x + width - 10 - xp_width - 16
+
+                mission_canvas.create_rectangle(
+                    xp_x, details_y,
+                    xp_x + xp_width + 16, details_y + XP_BADGE_HEIGHT,
+                    fill="#303348",
+                    outline="",
+                    tags="mission_card"
+                )
+
+                mission_canvas.create_text(
+                    xp_x + 8, details_y + 2,
+                    text=xp_text,
+                    anchor="nw",
+                    font=xp_font,
+                    fill="#65cb91" if xp >= 0 else "#e57a5c",
+                    tags="mission_card"
+                )
+
 
         # ==============================
         # EMPTY HISTORY
         # ==============================
         if not self.history:
-            tk.Label(
-                mission_list,
-                text=f"Your chronicle is empty. {"\nComplete your first bounty to leave a mark." if self.level == 0 else ""}",
+            mission_canvas.create_text(
+                200, 30,
+                text=(
+                    "Your chronicle is empty.\n"
+                    "Complete your first bounty to leave a mark."
+                    if self.level == 0
+                    else "Your chronicle is empty."
+                ),
                 font=("Segoe UI", 9, "italic"),
-                fg="#969caf",
-                bg="#171a27",
-                justify="center"
-            ).pack(fill="both", expand=True, pady=20)
-
-            return
-
-        # ==============================
-        # MISSION LIST
-        # ==============================
-        for entry in self.history:
-            status = str(entry.get("status"))
-            accent = {
-                "COMPLETED": "#65cb91",
-                "BONUS": "#ff8ccf",
-                "SKIPPED": "#696969",
-                "PARTIALLY COMPLETED": "#e5b85c"
-            }.get(status, "#e5b85c")
-
-            card = tk.Frame(
-                mission_list,
-                bg="#242638",
-                highlightbackground="#393d54",
-                highlightthickness=1
+                fill="#969caf",
+                justify="left",
+                tags="mission_card"
             )
-            card.pack(fill="x", padx=2, pady=3)
+        else:
+            def on_canvas_resize(event):
+                prepare_layout()
+                draw_visible_cards()
 
-            top = tk.Frame(card, bg="#242638")
-            top.pack(fill="x", padx=10, pady=(8, 5))
+            mission_canvas.bind(
+                "<Configure>",
+                on_canvas_resize
+            )
 
-            mission_type = str(entry.get("type", "GENERAL")).upper()
+            # Redraw after scrolling
+            original_yview = mission_canvas.yview
 
-            # Project badge
-            if entry.get("project") is not None:
-                tk.Label(
-                    top,
-                    text=f" {entry.get('project')} ",
-                    font=("Segoe UI", 7, "bold"),
-                    fg="#fff39a",
-                    bg="#393052",
-                    padx=5,
-                    pady=3
-                ).pack(side="left", padx=(0, 7))
+            def scroll_and_draw(*args):
+                original_yview(*args)
+                draw_visible_cards()
 
-            # Task title
-            if entry.get("task") is not None:
-                if mission_type != "SESSION":
-                    tk.Label(
-                        top,
-                        text="Task: ",
-                        font=("Segoe UI", 9),
-                        fg="#9298aa",
-                        bg="#242638"
-                    ).pack(side="left")
+            mission_scrollbar.configure(
+                command=scroll_and_draw
+            )
 
-                tk.Label(
-                    top,
-                    text=entry.get("task"),
-                    font=("Segoe UI", 9, "bold"),
-                    fg="#f0f0f5",
-                    bg="#242638",
-                    anchor="w",
-                    wraplength=380,
-                    justify="left"
-                ).pack(side="left", fill="x", expand=True)
+            mission_canvas.configure(
+                yscrollcommand=lambda first, last: (
+                    mission_scrollbar.set(first, last),
+                    draw_visible_cards()
+                )
+            )
 
-            # Date and duration
-            duration = entry.get("duration", 0)
+            self.scroll_on_wheel(
+                mission_canvas,
+                mission_canvas
+            )
 
-            duration_text = (
-                f"{duration}m" if duration >= 1
-                else None
-            ) if type(duration) == int else duration
+            prepare_layout()
+            draw_visible_cards()
 
-            tk.Label(
-                top,
-                text=f"{entry.get('date', '—')}  ·  {duration_text}" if duration_text is not None else f"{entry.get('date', '—')}",
-                font=("Segoe UI", 7),
-                fg="#aab0c0",
-                bg="#242638"
-            ).pack(side="right", padx=(6, 0))
+    def update_xp_display(self, current, requirement):
+        canvas = self.xp_canvas
 
-            # Bottom information row
-            details = tk.Frame(card, bg="#242638")
-            details.pack(fill="x", padx=10, pady=(2, 8))
+        canvas.itemconfig(self.xp_current, text=str(current))
+        canvas.itemconfig(self.xp_max, text=f"{requirement} XP")
 
-            # Mission type
-            tk.Label(
-                details,
-                text=f" {mission_type} ",
-                font=("Segoe UI", 7, "bold"),
-                fg="#b99aff",
-                bg="#393052",
-                padx=4,
-                pady=2
-            ).pack(side="left", padx=(0, 7))
+        gap = 8
+        x = 0
+        baseline = 27
 
-            # Status badge
-            tk.Label(
-                details,
-                text=f"  ✦ {status.replace('_', ' ')}  ",
-                font=("Segoe UI", 7, "bold"),
-                fg=accent,
-                bg="#303348",
-                padx=5,
-                pady=3
-            ).pack(side="left")
+        canvas.coords(self.xp_current, x, baseline)
 
-            # XP label
-            xp = entry.get('xp', 0)
-            tk.Label(
-                details,
-                text=f"✧  {"" if xp < 0 else "+" if xp > 0 else ""}{xp} XP",
-                font=("Segoe UI", 8, "bold"),
-                fg="#65cb91" if xp >= 0 else "#e57a5c",
-                bg="#303348",
-                padx=8,
-                pady=3
-            ).pack(side="right")
+        x += self.xp_current_font.measure(str(current)) + gap
 
+        canvas.coords(self.xp_separator, x, baseline)
+
+        x += self.xp_separator_font.measure("/") + gap
+
+        canvas.coords(self.xp_max, x, baseline)
+
+    def ui_render_dashboard_xp_display(self):
+        current_xp, requirement = self.calculate_progression()
+        realm = self.get_realm()
+
+        # Current realm
+        self.rank_label.config(text=realm["name"].upper())
+        # self.level_label.config(text=f"LEVEL {self.level}")
+        self.level_badge.itemconfig(
+            "level_text",
+            text=f"LEVEL {self.level}"
+        )
+        self.rank_description.config(text=realm["description"])
+
+        # XP progress
+        percentage = (
+            min(100, current_xp / requirement * 100)
+            if requirement > 0 else 100
+        )
+
+        remaining = max(0, requirement - current_xp)
+
+        
+        self.schedule_update("dashboard", "update_xp_display", 
+                             {"current": current_xp, "requirement": requirement})
+
+        self.xp_percentage_label.config(
+            text=f"{percentage:.0f}%"
+        )
+
+        progress = (current_xp / max(1, requirement)) * 100
+        self.set_xp_progress(progress)
+
+        self.total_xp_label.config(
+            text=f"{remaining:,} XP to next level"
+        )
+
+        # Next cultivation realm
+        realms = REALMS
+
+        current_index = next(
+            (
+                i for i, r in enumerate(realms)
+                if r[2] == realm["name"]
+            ),
+            -1
+        )
+
+        if current_index >= 0 and current_index + 1 < len(realms):
+            next_realm = realms[current_index + 1]
+            self.next_realm_label.config(
+                text=f"NEXT BREAKTHROUGH: {next_realm[2].upper()}"
+            )
+        else:
+            self.next_realm_label.config(
+                text="HIGHEST CULTIVATION REALM ACHIEVED"
+            )
+
+        # Dashboard statistics
+        self.dashboard_streak_card.config(
+            text=f"🔥  {self.getting_started_streak} "
+                f"{'day' if self.getting_started_streak == 1 else 'days'}",
+        )
+
+        self.dashboard_xp_card.config(
+            text=f"{self.xp} XP"
+        )
+
+        self.dashboard_bounty_card.config(
+            text=f"{self.total_completed_bounties} "
+                f"{'Bounty' if self.total_completed_bounties == 1 else 'Bounties'}"
+        )
+       
+    # region Dashboard - Next Cultivation Variations
+    def ui_update_next_cultivation_display(self, next=False):
+        grouped = {
+            "current": [],
+            "completed": [],
+            "postponed": []
+        }
+
+        today_str = date.today().isoformat()
+
+        for project, items in self.projects.items():
+            for item in items:
+                status = item.get("status", "current").lower()
+
+                if status not in grouped:
+                    status = "current"
+
+                if item.get("is_daily", False) and item.get("last_done_date") == today_str:
+                    status = "completed"
+
+                grouped[status].append((project, item))
+
+        bounty_content = self.next_cultivation_bounty_content
+        if not next:
+            for child in bounty_content.winfo_children():
+                child.destroy()
+
+        current_bounties = grouped["current"]
+
+        if current_bounties:
+            if not hasattr(self, "next_cultivation_index"):
+                self.next_cultivation_index = 0
+
+            self.next_cultivation_index %= len(current_bounties)
+            project_name, bounty = current_bounties[self.next_cultivation_index]
+
+            if next:
+                self.next_recom_title.config(text=bounty.get("task"))
+                self.next_recom_label.config(
+            text=f"Sect: {project_name}   ·   Estimated time: {bounty.get("duration")} minutes")
+                self.next_recom_reward.update_text(f"{bounty.get('reward_xp')} XP",
+                width = 120 if bounty.get('reward_xp') >= 100 else 100)
+            else:
+                self.update_next_cultivation_has_bounty(
+                    project_name, bounty,
+                    wrap_size=500,
+                    has_another=len(current_bounties) > 1
+                )
+
+        elif grouped["completed"]:
+            self.next_cultivation_index = 0
+            self.next_cultivation_finished_bounties(500)
+
+        else:
+            self.next_cultivation_index = 0
+            self.next_cultivation_empty(500)
+
+    def show_next_cultivation_recommendation(self):
+        self.next_cultivation_index += 1
+        self.ui_update_next_cultivation_display(next=True)
+
+    def update_next_cultivation_has_bounty(
+        self, project_name, bounty, wrap_size, has_another=False
+    ):
+        bounty_content = self.next_cultivation_bounty_content
+
+        # Header
+        header = tk.Frame(bounty_content, bg="#211F38")
+        header.pack(fill="x")
+
+        self.create_star_icon(frame=header, color=StarIconColors.PURPLE, filled=False, size=(22, 22), glow_radius=7)
+        
+        tk.Label(
+            header,
+            text="YOUR NEXT CULTIVATION",
+            bg="#211F38",
+            fg="#BC74FB",
+            font=("Segoe UI", 9, "bold")
+        ).pack(side="left")
+
+        # Header actions
+        header_actions = tk.Frame(header, bg="#211F38")
+        header_actions.pack(side="right")
+
+        self.make_button(
+            header_actions,
+            f"RECOMMENDED",
+            colors={
+                "base_bg": "#3E2972",
+                "base_text": "#B5A2FF",
+                "base_bd": "#3E2972"
+            },
+            compact=False,
+            font_size=7,
+            size = (140, 40),
+            radius=(12, 10),
+            badge=True
+        ).pack(side="left", padx=(0, 6), pady=3)
+
+        if has_another:
+            self.make_button(
+                header_actions,
+                f"↻ Another",
+                command=self.show_next_cultivation_recommendation,
+                colors={
+                    "base_bg": "#302B49",
+                    "base_text": "#C4B5FD",
+                    "base_bd": "#302B49",
+                    "highlight_bg": "#40375E",
+                    "highlight_text": "#E9D5FF",
+                    "highlight_bd": "#40375E"
+                },
+                compact=False,
+                font_size=7,
+                size = (140, 40),
+                radius=(12, 10),
+                badge=False
+            ).pack(side="left", padx=8, pady=4)
+
+        # Quest title
+        self.next_recom_title = tk.Label(
+            bounty_content,
+            text=bounty.get("task"),
+            bg="#211F38",
+            fg="#F1F0FF",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+            # wraplength=wrap_size,
+            justify="left"
+        )
+        self.next_recom_title.pack(fill="x", pady=(12, 5))
+
+        # Category and estimated time
+        self.next_recom_label = tk.Label(
+            bounty_content,
+            text=f"Sect: {project_name}   ·   Estimated time: {bounty.get("duration")} minutes",
+            bg="#211F38",
+            fg="#A5A2BC",
+            font=("Segoe UI", 8),
+            anchor="w"
+        )
+        self.next_recom_label.pack(fill="x", pady=(0, 10))
+
+        # Reward and availability
+        info_row = tk.Frame(bounty_content, bg="#211F38")
+        info_row.pack(fill="x")
+
+        # Left actions group
+        actions = tk.Frame(info_row, bg="#211F38")
+        actions.pack(side="left")
+
+        star_svg = StarIcon.make_star_svg(
+            color=PURPLE,
+            glow_radius=10,
+            glow_strength=0.6,
+            reflective=True,
+            reflection_strength=0
+        )
+
+        star_image = StarIcon.svg_to_photo(star_svg, size=(20, 20))
+
+        self.next_recom_reward = self.make_button(
+            actions,
+            f"{bounty.get('reward_xp')} XP",
+            colors={
+                "base_bg": "#2E2659",
+                "base_text": "#E4A6FF",
+                "base_bd": "#2E2659"
+            },
+            compact=False,
+            font_size=9,
+            size = (120 if bounty.get('reward_xp') >= 100 else 100, 42),
+            radius=(12, 10),
+            badge=True,
+            icon_gap=12,
+            icon=star_image
+        )
+        self.next_recom_reward.pack(side="left", padx=(0, 8))
+
+        self.make_button(
+            actions,
+            "Start  →",
+            lambda: self.choose_bounty(bounty),
+            bg="FILLED_PURPLE_BUTTON",
+            fg="#FFFFFF",
+            compact=False,
+            font_size=9,
+            size = (110, 42),
+            radius=(12, 10)
+        ).pack(side="left")
+
+        # Availability stays on the far right
+        
+        self.make_button(
+            info_row,
+            f"●  AVAILABLE",
+            colors={
+                "base_bg": "#193B35",
+                "base_text": "#6EE7B7",
+                "base_bd": "#193B35"
+            },
+            compact=False,
+            font_size=7,
+            size = (120, 40),
+            radius=(12, 10),
+            badge=True
+        ).pack(side="right", padx=(8, 5))
+
+        # Footer hint
+        tk.Label(
+            bounty_content,
+            text="Your next challenge awaits.",
+            bg="#211F38",
+            fg="#77758F",
+            font=("Segoe UI", 7),
+            anchor="w"
+        ).pack(fill="x", pady=(10, 0))
+
+    def next_cultivation_finished_bounties(self, wrap_size):
+        bounty_content = self.next_cultivation_bounty_content
+
+        tk.Label(
+            bounty_content,
+            text="✦  CULTIVATION STATUS",
+            bg="#211F38",
+            fg="#A78BFA",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="No active bounties left!",
+            bg="#211F38",
+            fg="#F1F0FF",
+            font=("Segoe UI", 11, "bold")
+        ).pack(anchor="w", pady=(12, 5))
+
+        tk.Label(
+            bounty_content,
+            text="You've completed all your available quests. "
+                "Take a moment to appreciate your progress.",
+            bg="#211F38",
+            fg="#A5A2BC",
+            font=("Segoe UI", 8),
+            wraplength=wrap_size,
+            justify="left"
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="✧  Your next challenge awaits.",
+            bg="#211F38",
+            fg="#C4B5FD",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w", pady=(12, 0))
+   
+    def next_cultivation_empty(self, wrap_size):
+        bounty_content = self.next_cultivation_bounty_content
+
+        tk.Label(
+            bounty_content,
+            text="✦  YOUR CULTIVATION JOURNEY",
+            bg="#211F38",
+            fg="#A78BFA",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="A journey yet to begin.",
+            bg="#211F38",
+            fg="#F1F0FF",
+            font=("Segoe UI", 11, "bold")
+        ).pack(anchor="w", pady=(12, 5))
+
+        tk.Label(
+            bounty_content,
+            text="No active or completed tasks just yet. "
+                "Every great cultivator starts somewhere. "
+                "Your first step is waiting.",
+            bg="#211F38",
+            fg="#A5A2BC",
+            font=("Segoe UI", 8),
+            wraplength=wrap_size,
+            justify="left"
+        ).pack(anchor="w")
+
+        tk.Label(
+            bounty_content,
+            text="✧  Small steps lead to great things.",
+            bg="#211F38",
+            fg="#C4B5FD",
+            font=("Segoe UI", 8, "bold")
+        ).pack(anchor="w", pady=(12, 0))
+    
+    # endregion
+    
     # endregion 
 
     # region ---------------- POPUPS ----------------
@@ -2447,6 +3396,9 @@ class FocusTimer:
 
         editor.insert("1.0", "\n".join(lines))
 
+        def projects_changed(old_projects, new_projects):
+            return old_projects != new_projects
+   
         def apply_markdown():
             parsed_projects = {}
             current_project = "General"
@@ -2560,7 +3512,7 @@ class FocusTimer:
                         "reward_xp": reward,
                         "is_daily": is_daily,
                         "status": status,
-                        "streak_count": 0,
+                        "streak_count": streak,
                         
                         "reclaimable": True,
                         "previous_done_date": previous_done if is_daily else None,
@@ -2582,33 +3534,41 @@ class FocusTimer:
                 )
                 return
 
-            self.projects = parsed_projects
+            changed = projects_changed(self.projects, parsed_projects)
 
-            if self.active_project not in self.projects:
-                self.active_project = next(iter(self.projects))
+            if changed:
+                self.projects = parsed_projects
 
-            # self.selected_mission = None
-            self.refresh_project_picker()
-            self.render_mission_board()
-            self.save_data()
+                if self.active_project not in self.projects:
+                    self.active_project = next(iter(self.projects))
 
-            popup.destroy()
+                self.schedule_update("board", "render_mission_board")
+                self.save_data()
 
+            self.close_custom_popup(popup)
             self.status_label.config(
                 text="✦ Quest scrolls successfully updated."
             )
 
-        tk.Button(
+        self.make_button(
             popup,
-            text="SAVE QUEST SCROLLS",
+            "SAVE QUEST SCROLLS",
             command=apply_markdown,
-            bg="#7668e8",
-            fg="white",
-            relief="flat",
-            font=("Segoe UI", 9, "bold"),
-            cursor="hand2"
+            colors={
+                "base_bg": "#7668e8",
+                "base_text": "#FFFFFF",
+                "base_bd": "#7668e8",
+                "highlight_bg": "#5c4dca",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#5c4dca"
+            },
+            compact=False,
+            font_size=9,
+            size = (200, 45),
+            radius=(10, 5)
         ).pack(pady=(0, 13), ipadx=15, ipady=7)
         
+        self._current_popups.append(popup)
         self.check_tutorial("markdown_editor")
         popup.grab_set()
         popup.wait_window()
@@ -2807,19 +3767,22 @@ class FocusTimer:
 
             button.pack(pady=(4, 5))
 
-        button = tk.Button(
+        button = self.make_button(
             content,
-            text="CONTINUE CULTIVATING",
+            "CONTINUE CULTIVATING",
             command=lambda: self.close_custom_popup(popup),
-            font=("Segoe UI", 10, "bold"),
-            bg="#6c63ff",
-            fg="white",
-            activebackground="#8179ff",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=22,
-            pady=10
+            colors={
+                "base_bg": "#6c63ff",
+                "base_text": "#FFFFFF",
+                "base_bd": "#6c63ff",
+                "highlight_bg": "#8179ff",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#8179ff"
+            },
+            compact=False,
+            font_size=10,
+            size = (250, 45),
+            radius=(10, 5)
         )
 
         popup_container.after(400, type_message)
@@ -2940,28 +3903,29 @@ class FocusTimer:
 
             finished["value"] = True
 
-            try:
-                popup.grab_release()
-                popup.destroy()
-            except tk.TclError:
-                pass
-
+            self.close_custom_popup(popup)
             on_continue()
 
-        tk.Button(
+
+        button = self.make_button(
             popup_container,
-            text="BEGIN CULTIVATION  →",
+            "BEGIN CULTIVATION  →",
             command=proceed,
-            font=("Segoe UI", 10, "bold"),
-            bg="#6c55b5",
-            fg="white",
-            activebackground="#8b72dc",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=22,
-            pady=9
-        ).place(relx=0.5, rely=0.91, anchor="center")
+            colors={
+                "base_bg": "#6c55b5",
+                "base_text": "#FFFFFF",
+                "base_bd": "#6c55b5",
+                "highlight_bg": "#8b72dc",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#8b72dc"
+            },
+            compact=False,
+            font_size=11,
+            size = (280, 45),
+            radius=(10, 5)
+        )
+        button.pack(side="left", pady=22, padx=9)
+        button.place(relx=0.5, rely=0.91, anchor="center")
 
         popup.protocol("WM_DELETE_WINDOW", proceed)
 
@@ -3025,9 +3989,13 @@ class FocusTimer:
             start_hidden=True
         )
 
+        HEIGHT = 610
+        WIDTH = 580
+        MIDDLE_WIDTH = 580 / 2
+       
         canvas = tk.Canvas(
             popup_container,
-            width=540,
+            width=WIDTH,
             height=550,
             bg="#100f20",
             highlightthickness=0
@@ -3036,57 +4004,61 @@ class FocusTimer:
 
         # Heavenly notification
         canvas.create_text(
-            270, 42,
+            MIDDLE_WIDTH, 42,
             text="✦  HEAVENLY WARNING  ✦",
             fill="#bda8ff",
             font=("Segoe UI", 11, "bold")
         )
 
         # Magical rings
-        ring = canvas.create_oval(
-            190, 85, 350, 245,
+        CENTER_Y = 175
+        TEXT_Y_LOC = 320
+
+        ring = canvas.create_oval(  # OUTER RING
+            MIDDLE_WIDTH - 80, CENTER_Y - 80,
+            MIDDLE_WIDTH + 80, CENTER_Y + 80,
             outline="#a45d79",
             width=3
         )
 
-        canvas.create_oval(
-            207, 102, 333, 228,
+        canvas.create_oval(  # INNER RING
+            MIDDLE_WIDTH - 63, CENTER_Y - 63,
+            MIDDLE_WIDTH + 63, CENTER_Y + 63,
             outline="#d9b75f",
             width=2
         )
 
         canvas.create_text(
-            270, 150,
+            MIDDLE_WIDTH, 150,
             text="⚠",
             fill="#f5d98a",
             font=("Segoe UI Symbol", 55, "bold")
         )
 
         # Main message
-        text_y_loc = 310
         canvas.create_text(
-            270, text_y_loc,
+            MIDDLE_WIDTH, TEXT_Y_LOC,
             text="STREAK BROKEN!",
             fill="#f5d98a",
             font=("Segoe UI", 24, "bold")
         )
 
         canvas.create_text(
-            270, text_y_loc+45,
+            MIDDLE_WIDTH, TEXT_Y_LOC+45,
             text=f"Your previous streak: {streak} day(s)",
             fill="#ffffff",
             font=("Segoe UI", 13, "bold")
         )
 
         canvas.create_text(
-            270, text_y_loc+85,
+            MIDDLE_WIDTH, TEXT_Y_LOC+85,
             text="Your Dao Heart has missed a day.",
             fill="#bdb5d5",
             font=("Segoe UI", 11)
         )
 
         canvas.create_text(
-            270, text_y_loc+117,
+            MIDDLE_WIDTH, TEXT_Y_LOC+117,
             text="Will you preserve your path or begin anew?",
             fill="#bdb5d5",
             font=("Segoe UI", 10)
@@ -3096,8 +4068,8 @@ class FocusTimer:
         particles = []
 
         for _ in range(42):
-            px = random.randint(15, 540)
-            py = random.randint(45, 560)
+            px = random.randint(15, WIDTH)
+            py = random.randint(45, HEIGHT)
             size = random.choice((2, 3, 4))
 
             dot = canvas.create_oval(
@@ -3122,12 +4094,7 @@ class FocusTimer:
                 return
 
             finished["value"] = True
-
-            try:
-                popup.grab_release()
-                popup.destroy()
-            except tk.TclError:
-                pass
+            self.close_custom_popup(popup)
 
         result = {"choice": None}
 
@@ -3144,43 +4111,49 @@ class FocusTimer:
         button_frame = tk.Frame(popup_container, bg="#100f20")
         button_frame.place(
             relx=0.5,
-            rely=0.85,
+            rely=0.89,
             anchor="center"
         )
 
         # Grace button
-        tk.Button(
+        
+        self.make_button(
             button_frame,
-            text="✦  USE GRACE DAY",
+            "✦  USE GRACE DAY",
             command=use_grace,
-            font=("Segoe UI", 11, "bold"),
-            bg="#6c55b5",
-            fg="white",
-            activebackground="#8b72dc",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=20,
-            pady=10,
-            width=28
-        ).pack(pady=(0, 12))
+            colors={
+                "base_bg": "#6c55b5",
+                "base_text": "#FFFFFF",
+                "base_bd": "#6c55b5",
+                "highlight_bg": "#8b72dc",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#8b72dc"
+            },
+            compact=False,
+            font_size=11,
+            size = (250, 45),
+            radius=(10, 5)
+        ).pack(side="left", pady=(6, 6), padx=5)
 
         # Reset button
-        tk.Button(
+        
+        self.make_button(
             button_frame,
-            text="RESET STREAK",
+            "RESET STREAK",
             command=reset_streak,
-            font=("Segoe UI", 10, "bold"),
-            bg="#30243e",
-            fg="#f5d98a",
-            activebackground="#493653",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=20,
-            pady=8,
-            width=28
-        ).pack()
+            colors={
+                "base_bg": "#30243e",
+                "base_text": "#f5d98a",
+                "base_bd": "#30243e",
+                "highlight_bg": "#493653",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#493653"
+            },
+            compact=False,
+            font_size=11,
+            size = (240, 45),
+            radius=(10, 5)
+        ).pack(side="left", pady=(6, 6), padx=5)
 
         # Prevent accidental dismissal
         popup.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -3196,13 +4169,12 @@ class FocusTimer:
             n = phase["n"]
 
             pulse = 5 + (n % 24)
-
             canvas.coords(
                 ring,
-                270 - 80 - pulse,
-                165 - 80 - pulse,
-                270 + 80 + pulse,
-                165 + 80 + pulse
+                MIDDLE_WIDTH - 80 - pulse,
+                CENTER_Y - 80 - pulse,
+                MIDDLE_WIDTH + 80 + pulse,
+                CENTER_Y + 80 + pulse
             )
 
             canvas.itemconfigure(
@@ -3235,7 +4207,7 @@ class FocusTimer:
 
         animate()
 
-        self.adjust_popup_dimensions(popup, size=(540, 690), with_lift=True)
+        self.adjust_popup_dimensions(popup, size=(580, 610), with_lift=True)
         popup.wait_window()
         return result["choice"]
     
@@ -3243,7 +4215,7 @@ class FocusTimer:
         popup = tk.Toplevel(self.root)
         popup.title("Cultivation Complete")
         width, height = 700, 575
-        mwidth, mheight = 700, 310
+        mwidth, mheight = 700, 300
 
         BG = "#171923"
         PANEL = "#222738"
@@ -3413,27 +4385,34 @@ class FocusTimer:
                 justify="center"
             ).pack(padx=25, pady=12)
 
-            tk.Button(
+
+            self.make_button(
                 popup_container,
-                text="CONTINUE",
+                "CONTINUE",
                 command=lambda: self.close_custom_popup(popup),
-                bg=PANEL,
-                fg=GOLD,
-                activebackground="#34394b",
-                activeforeground=GOLD,
-                relief="flat",
-                font=("Segoe UI", 10, "bold"),
-                cursor="hand2",
-                bd=0
-            ).pack(pady=(18, 25), ipadx=30, ipady=8)
+                colors={
+                    "base_bg": PANEL,
+                    "base_text": GOLD,
+                    "base_bd": PANEL,
+                    "highlight_bg": "#34394b",
+                    "highlight_text": GOLD,
+                    "highlight_bd": "#34394b"
+                },
+                compact=False,
+                font_size=10,
+                size = (300, 45),
+                radius=(10, 5)
+            ).pack(pady=(25, 15))
+
             self.overlay.withdraw()
 
             if self.chosen_bounty is not None:
                 if choice == "YES!":
                     self.change_mission_status(
-                            self.chosen_bounty, "completed"
+                        self.chosen_bounty, "completed"
                     )
                 self.chosen_bounty = None
+                self.schedule_update("dashboard", "ui_update_next_cultivation_display")
 
             popup.grab_set()
             popup.lift()
@@ -3486,43 +4465,49 @@ class FocusTimer:
             start_hidden=True
         )
 
-        tk.Label(popup_container, text="NAME YOUR SECT", bg="#171923", fg="#e5b85c", font=("Segoe UI", 10, "bold")).pack(pady=(18, 8))
+        tk.Label(popup_container, text="NAME YOUR SECT", bg="#171923", fg="#e5b85c", font=("Segoe UI", 10, "bold")).pack(pady=(18, 5))
 
         name_var = tk.StringVar()
         
-        # control_minutes_container = tk.Frame(popup_container, bg=PANEL_ALT)
-        # control_minutes_container.pack(fill="x")
-
-        entry_container = tk.Frame(popup_container, bg="#252a3a")
-        entry_container.pack(fill="x", padx=22)
-
-        entry = tk.Entry(
-            entry_container,
+        entry_container, entry = self.make_rounded_entry(
+            popup_container,
             textvariable=name_var,
-            bg="#252a3a",
-            fg="white",
-            insertbackground="white",
-            relief="flat",
+            fg_color="#FFFFFF",
+            bg_color="#252a3a",
+            height=40,
+            radius=12,
+            container_padx=15,
+            container_pady=(0, 3),
+            inner_padx=15,
             font=("Segoe UI", 10)
         )
-        entry.pack(fill="x", padx=10, ipady=7)
-        
-        # entry.pack(
-        #     fill="x",
-        #     padx=22,
-        #     ipady=7
-        # )
-
+    
         def create():
             name = name_var.get().strip()
             if not name:
                 return
             
             self.create_project(name)
-            popup.destroy()
+            self.close_custom_popup(popup)
             self.check_tutorial("sect_creation")
 
-        tk.Button(popup_container, text="JOIN SECT", command=create, bg="#7668e8", fg="white", relief="flat", font=("Segoe UI", 9, "bold")).pack(pady=12, ipadx=12, ipady=5)
+        self.make_button(
+            popup_container,
+            "JOIN SECT",
+            command=create,
+            colors={
+                "base_bg": "#7668e8",
+                "base_text": "#FFFFFF",
+                "base_bd": "#7668e8",
+                "highlight_bg": "#5c4dca",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#5c4dca"
+            },
+            compact=False,
+            font_size=9,
+            size = (200, 35),
+            radius=(10, 5)
+        ).pack(pady=12, ipadx=12, ipady=5)
 
         entry.focus_set()
         self.adjust_popup_dimensions(popup, (340, 200), with_lift=True)
@@ -3614,35 +4599,42 @@ class FocusTimer:
             self.close_custom_popup(popup)
             on_confirm()
 
-        tk.Button(
-            button_frame,
-            text="⚔  RESTART CULTIVATION",
-            command=confirm_restart,
-            font=("Segoe UI", 9, "bold"),
-            bg="#8e354b",
-            fg="white",
-            activebackground="#b44760",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=20,
-            pady=10
-        ).pack(side="left", padx=6)
 
-        tk.Button(
+        self.make_button(
             button_frame,
-            text="CANCEL",
+            "⚔  RESTART CULTIVATION",
+            command=confirm_restart,
+            colors={
+                "base_bg": "#8e354b",
+                "base_text": "#FFFFFF",
+                "base_bd": "#8e354b",
+                "highlight_bg": "#b44760",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#b44760"
+            },
+            compact=False,
+            font_size=9,
+            size = (300, 45),
+            radius=(10, 5)
+        ).pack(side="left", pady=10, padx=6)
+
+        self.make_button(
+            button_frame,
+            "CANCEL",
             command=lambda: self.close_custom_popup(popup),
-            font=("Segoe UI", 9, "bold"),
-            bg="#292638",
-            fg="#b9a3ff",
-            activebackground="#403653",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=20,
-            pady=10
-        ).pack(side="left", padx=6)
+            colors={
+                "base_bg": "#292638",
+                "base_text": "#b9a3ff",
+                "base_bd": "#292638",
+                "highlight_bg": "#403653",
+                "highlight_text": "#b9a3ff",
+                "highlight_bd": "#403653"
+            },
+            compact=False,
+            font_size=9,
+            size = (250, 45),
+            radius=(10, 5)
+        ).pack(side="left", pady=10, padx=6)
 
         # Pulsating title
         glow_colors = [
@@ -3750,13 +4742,14 @@ class FocusTimer:
         # Display popup
         popup.wait_window()
 
-    def render_message_popup(self, title, description, wrapsize=350, is_welcome=False):
+    def render_message_popup(self, title, description, wrapsize=350, is_welcome=False, close_rollback = True):
         popup = tk.Toplevel(self.root)
 
         # Custom draggable title bar
         popup_container = self.create_custom_titlebar(
             popup, 
-            start_hidden=True
+            start_hidden=True,
+            close_rollback=close_rollback
         )
 
      # Icon container (fixed dimensions)
@@ -3799,6 +4792,7 @@ class FocusTimer:
                 popup.after(180, lambda: animate_star(next_index))
 
             animate_star()
+
         # Title
         tk.Label(
             popup_container,
@@ -3820,36 +4814,40 @@ class FocusTimer:
         ).pack(padx=25, pady=5)
 
         # Understood button
-        tk.Button(
+        
+        self.make_button(
             popup_container,
-            text="UNDERSTOOD",
+            "UNDERSTOOD",
             command=lambda: (
-                self.close_custom_popup(popup),
+                self.close_custom_popup(popup, close_rollback),
                 # self.root.after(100, self.bring_window_to_front)
             ),
-            bg="#7668E8",
-            fg="white",
-            activebackground="#897CF0",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            font=("Segoe UI", 9, "bold"),
-            padx=25,
-            pady=7
-        ).pack(pady=(15, 20))
+            colors={
+                "base_bg": "#7668E8",
+                "base_text": "#FFFFFF",
+                "base_bd": "#7668E8",
+                "highlight_bg": "#897CF0",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#897CF0"
+            },
+            compact=False,
+            font_size=9,
+            size = (200, 45),
+            radius=(10, 5)
+        ).pack(padx=7, pady=(15, 20))
 
         # Keyboard shortcuts
         popup.bind(
             "<Return>",
             lambda e: (
-                self.close_custom_popup(popup),
+                self.close_custom_popup(popup, close_rollback),
                 # self.root.after(100, self.bring_window_to_front)
             )
         )
         popup.bind(
             "<Escape>",
             lambda e: (
-                self.close_custom_popup(popup),
+                self.close_custom_popup(popup, close_rollback),
                 # self.root.after(100, self.bring_window_to_front)
             )
         )
@@ -3970,38 +4968,44 @@ class FocusTimer:
         button_frame.pack(pady=(15, 20))
 
         def confirm():
-            popup.destroy()
+            self.close_custom_popup(popup)
             on_confirm()
 
-        tk.Button(
+        self.make_button(
             button_frame,
-            text="YES",
+            "YES",
             command=confirm,
-            bg="#7668E8",
-            fg="white",
-            activebackground="#897CF0",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            font=("Segoe UI", 9, "bold"),
-            padx=25,
-            pady=7
-        ).pack(side="left", padx=7)
+            colors={
+                "base_bg": "#7668E8",
+                "base_text": "#FFFFFF",
+                "base_bd": "#7668E8",
+                "highlight_bg": "#897CF0",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#897CF0"
+            },
+            compact=False,
+            font_size=9,
+            size = (200, 45),
+            radius=(10, 5)
+        ).pack(side="left", padx=7, pady=(20, 3))
 
-        tk.Button(
+        self.make_button(
             button_frame,
-            text="CANCEL",
+            "CANCEL",
             command=lambda: self.close_custom_popup(popup),
-            bg="#292D3D",
-            fg="#B8BED0",
-            activebackground="#393F52",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            font=("Segoe UI", 9, "bold"),
-            padx=25,
-            pady=7
-        ).pack(side="left", padx=7)
+            colors={
+                "base_bg": "#292D3D",
+                "base_text": "#B8BED0",
+                "base_bd": "#292D3D",
+                "highlight_bg": "#393F52",
+                "highlight_text": "#FFFFFF",
+                "highlight_bd": "#393F52"
+            },
+            compact=False,
+            font_size=9,
+            size = (200, 45),
+            radius=(10, 5)
+        ).pack(side="left", padx=7, pady=(20, 3))
 
         popup.bind("<Return>", lambda e: confirm())
         popup.bind("<Escape>", lambda e: self.close_custom_popup(popup))
@@ -4184,7 +5188,7 @@ class FocusTimer:
 
         return False
     
-    def scroll_on_wheel(self, scrollable, container=None):
+    def scroll_on_wheel(self, scrollable, container=None, custom_update=None):
         def on_mousewheel(event):
             target = event.widget
 
@@ -4211,6 +5215,7 @@ class FocusTimer:
                 direction = -1 if event.delta > 0 else 1
 
             target.yview_scroll(direction, "units")
+            if custom_update is not None: custom_update(event)
             return "break"
 
         def bind_wheel(event):
@@ -4243,61 +5248,1122 @@ class FocusTimer:
                 add="+"
             )
 
-
     # ---------- HELPERS ----------
-    def make_card(self, parent, title, subtitle=None):
-        card = tk.Frame(
+    def make_card(
+        self,
+        parent,
+        title = "",
+        subtitle=None,
+        title_color=GOLD,
+        subtitle_color=MUTED,
+        border_color = "#705A42",
+        card_bg=PANEL,
+        content_padx = 12,
+        content_pady = (14, 17), # (10, 0) if has_content
+        border_radius = 12,
+        border_type : str = "sharp", #"rounded" | "sharp",
+        has_content = True,
+        star_color = StarIconColors.DEEP_GOLD,
+        star_filled = True,
+        star_glow=(10, 0.6),
+        icon_type = None,
+        icon_size = None,
+        icon_with_subtitle=False,
+        expand_height=False
+    ):
+        card = tk.Canvas(
             parent,
-            bg=PANEL,
-            highlightbackground=BORDER,
-            highlightthickness=1
-        )
-        heading = tk.Frame(card, bg=PANEL)
-        heading.pack(fill="x", padx=12, pady=(10, 5))
-
-        tk.Label(
-            heading,
-            text=title.upper(),
-            bg=PANEL,
-            fg=GOLD,
-            font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w")
-
-        if subtitle:
-            tk.Label(
-                heading,
-                text=subtitle,
-                bg=PANEL,
-                fg=MUTED,
-                font=("Segoe UI", 8)
-            ).pack(anchor="w", pady=(2, 0))
-
-        content = tk.Frame(card, bg=PANEL)
-        content.pack(fill="both", expand=True, padx=12, pady=(4, 12))
-        return card, content
-
-    def make_button(self, parent, label, command, bg=PURPLE, fg = "#11131A", compact=False):
-        return tk.Button(
-            parent,
-            text=label,
-            command=command,
-            bg=bg,
-            fg=fg,
-            activebackground=TEXT,
-            activeforeground=BG,
-            relief="flat",
+            bg=parent.cget("bg"),
+            highlightthickness=0,
             bd=0,
-            cursor="hand2",
-            font=("Segoe UI", 8 if compact else 9, "bold"),
-            padx=10 if compact else 14,
-            pady=5 if compact else 8
+            height=1
         )
+
+        # Inner content
+        inner = tk.Frame(card, bg=card_bg)
+
+        window = card.create_window(
+            14, 10,
+            anchor="nw",
+            window=inner
+        )
+
+        def draw_rounded_rect(x1, y1, x2, y2, r=12):
+            import math
+
+            points = []
+
+            corners = [
+                (x2 - r, y1 + r, -90),
+                (x2 - r, y2 - r, 0),
+                (x1 + r, y2 - r, 90),
+                (x1 + r, y1 + r, 180)
+            ]
+
+            for cx, cy, start in corners:
+                for i in range(9):
+                    angle = math.radians(start + i * 90 / 8)
+                    points.extend((
+                        cx + r * math.cos(angle),
+                        cy + r * math.sin(angle)
+                    ))
+
+            return points
+        
+        def draw_sharp_rect(width, height):
+            cut = 12  # Size of diagonal corner cuts
+
+            return [
+                cut, 1,
+                width - cut, 1,
+                width - 1, cut,
+                width - 1, height - cut,
+                width - cut, height - 1,
+                cut, height - 1,
+                1, height - cut,
+                1, cut
+            ]
+        
+        def resize_card(event=None):
+            card.update_idletasks()
+            inner.update_idletasks()
+
+            width = card.winfo_width()
+            if width <= 1:
+                return
+
+            inner_height = inner.winfo_reqheight()
+
+            if expand_height:
+                height = card.winfo_height()
+                if height <= 1:
+                    return
+                inner_height = height - 20
+            else:
+                height = inner_height + 20
+                card.configure(height=height)
+
+            card.itemconfigure(
+                window,
+                width=max(1, width - 28),
+                height=max(1, inner_height)
+            )
+
+            # Calculate background coordinates
+            if border_type == "rounded":
+                points = draw_rounded_rect(
+                    1, 1,
+                    width - 1, height - 1,
+                    r=border_radius
+                )
+            else:
+                points = draw_sharp_rect(width, height)
+
+            # Create background only once
+            if not hasattr(card, "_background_id"):
+                card._background_id = card.create_polygon(
+                    points,
+                    smooth=False,
+                    fill=card_bg,
+                    outline=border_color,
+                    width=1 if border_type == "sharp" else 0.6,
+                    tags="card_background"
+                )
+                card.tag_lower(card._background_id)
+
+            else:
+                # Update existing background
+                card.coords(card._background_id, *points)
+
+                card.itemconfigure(
+                    card._background_id,
+                    fill=card_bg,
+                    outline=border_color
+                )
+    
+        # Heading
+        heading = tk.Frame(inner, bg=card_bg)
+        heading.pack(
+            fill="x",
+            padx=content_padx,
+            pady=(10, 0) if has_content else content_pady
+        )
+
+        if icon_with_subtitle:
+            # Icon + vertically stacked title and subtitle
+            header_row = tk.Frame(heading, bg=card_bg)
+            header_row.pack(anchor="w", fill="x")
+
+            icon_loc = header_row
+        else:
+            title_row = tk.Frame(heading, bg=card_bg)
+            title_row.pack(anchor="w", fill="x")
+            icon_loc = title_row
+            title_loc = title_row
+            subtitle_loc = heading
+
+        if icon_type is not None:
+            if icon_type == "star":
+                self.create_star_icon(
+                    frame=icon_loc,
+                    color=star_color,
+                    size=icon_size,
+                    filled=star_filled,
+                    glow_radius=star_glow[0],
+                    glow_strength=star_glow[1]
+                )
+            else:
+                self.create_icon(
+                    frame=icon_loc,
+                    icon_type=icon_type,
+                    size=icon_size
+                )
+
+        if icon_with_subtitle:
+            text_column = tk.Frame(header_row, bg=card_bg)
+            text_column.pack(side="left", anchor="center")
+
+            title_loc=text_column
+            subtitle_loc=text_column
+            
+        if has_content:
+            title_label = tk.Label(
+                title_loc,
+                text=title.upper(),
+                bg=card_bg,
+                fg=title_color,
+                font=("Segoe UI", 9, "bold")
+            ).pack(anchor="w")
+
+            if subtitle:
+                tk.Label(
+                    subtitle_loc,
+                    text=subtitle,
+                    bg=card_bg,
+                    fg=subtitle_color,
+                    font=("Segoe UI", 8)
+                ).pack(anchor="w")
+
+            # Content
+            content = tk.Frame(inner, bg=card_bg)
+            content.pack(
+                fill="both",
+                expand=True,
+                padx=12,
+                pady=content_pady
+            )
+            
+        card.bind("<Configure>", resize_card)
+        inner.bind("<Configure>", resize_card)
+        card.after_idle(resize_card)
+        
+        return card, content if has_content else title_row
+
+    def make_button(self, parent, label, command=None, bg=PANEL,
+                    fg=None, colors = None, compact=False, font_size=None,
+                    radius=(11, 13), size=None,
+                    interactive=True, badge=False,
+                    center_content=True, highlight=True, button_state = True,
+                    icon=None, icon_size=(18, 18), icon_gap=6):
+        
+        if colors is not None:
+            base_bg, base_bd, base_text, highlight_bg, highlight_bd, highlight_text = (
+                colors.get("base_bg", PANEL),
+                colors.get("base_bd", "#454D68"),
+                colors.get("base_text", TEXT),
+                colors.get("highlight_bg", PANEL),
+                colors.get("highlight_bd", "#454D68"),
+                colors.get("highlight_text", TEXT)
+            )
+        elif bg == BRIGHT_PURPLE:
+            base_bg, base_bd, base_text, highlight_bg, highlight_bd, highlight_text = (
+                "#252248", "#4D4676", "#F6F2FA", "#3D3336", GOLD, GOLD
+            )
+
+        elif bg == "MUTED_PURPLE_BUTTON":
+            base_bg, base_bd, base_text, highlight_bg, highlight_bd, highlight_text = (
+                "#252248", "#4D4676", "#F6F2FA", "#3D3336", GOLD, GOLD
+            )
+
+        elif bg == "FILLED_PURPLE_BUTTON":
+            base_bg, base_bd, base_text, highlight_bg, highlight_bd, highlight_text = (
+                "#8B6CF6", "#8B6CF6", TEXT, "#7552F2", "#7552F2", TEXT
+            )
+        else:
+            if bg == GOLD:
+                base_bg, base_bd, highlight = (
+                    "#F4B653", "#FFE08A", "#FFD36B"
+                )
+            elif bg == GREEN:
+                base_bg, base_bd, highlight = (
+                    "#50C99A", "#A5F5C7", "#83E5B5"
+                )
+
+                disabled_bg, disabled_bd, disabled_fg = (
+                    "#29483F", "#477565", "#83A99A"
+                )
+            elif bg == RED:
+                base_bg, base_bd, highlight = (
+                    "#D95757", "#FF9999", "#F07878"
+                )
+
+                disabled_bg, disabled_bd, disabled_fg = (
+                    "#482F35", "#70434A", "#A8797E"
+                )
+            elif bg == PURPLE:
+                base_bg, base_bd, highlight = (
+                    "#252248", "#4D4676", PURPLE
+                )
+
+            base_text = "#11131A"
+            highlight_bg, highlight_bd, highlight_text = highlight, highlight, base_text
+        
+        if size:
+            width, height = size
+        else:
+            width = 60 if compact else 200
+            height = 32 if compact else 52
+
+        canvas = tk.Canvas(
+            parent,
+            width=width,
+            height=height,
+            bg=parent.cget("bg"),
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2" if interactive and not badge else "arrow"
+        )
+
+        font = ("Segoe UI", font_size or (11 if compact else 10), "bold")
+        text_font = tk.font.Font(font=font)
+
+        icon_w = icon_size[0] if icon else 0
+        gap = icon_gap if icon else 0
+        
+        canvas.button_text = label
+        canvas.total_w = icon_w + gap + text_font.measure(label)
+        canvas.button_state = button_state
+
+        def draw(event=None, hover=False, pressed=False, text_override=None):
+            canvas.delete("all")
+
+            w = canvas.winfo_width()
+
+            if w < 10:
+                return
+
+            if canvas.button_state == False:
+                current_bg = disabled_bg
+                current_border = disabled_bd
+                current_text = disabled_fg
+            else:
+                current_bg = highlight_bg if hover and interactive and not badge else base_bg
+                current_border = highlight_bd if hover and interactive and not badge else base_bd
+                current_text = highlight_text if hover and interactive and not badge else base_text
+
+            self.draw_rounded_rect(
+                canvas,
+                w,
+                height,
+                radius[1],
+                current_bg,
+                current_border,
+                border_width=1,
+                tag="button"
+            )
+
+            w = canvas.winfo_width()
+            h = canvas.winfo_height()
+
+            start_x = (w - canvas.total_w) / 2 if center_content else 10
+            center_y = h / 2
+
+            if icon:
+                canvas.create_image(
+                    start_x, center_y,
+                    image=icon,
+                    anchor="w"
+                )
+
+            canvas.create_text(
+                start_x + icon_w + gap,
+                center_y,
+                text=canvas.button_text,
+                fill=current_text,
+                font=font,
+                anchor="w"
+            )
+   
+        canvas.bind("<Configure>", draw) 
+
+        if interactive and not badge:
+            if highlight:
+                canvas.bind("<Enter>", lambda e: draw(hover=True))
+                canvas.bind("<Leave>", lambda e: draw())
+
+            def on_click(event):
+                if command:
+                    # draw(pressed=True)
+                    # canvas.after(80, draw)
+                    command()
+
+            canvas.bind("<Button-1>", on_click)
+
+        canvas.after(10, draw)
+
+        canvas.button_text = label
+
+        def update_text(new_text, width=None):
+            canvas.button_text = str(new_text)
+            text_width = text_font.measure(canvas.button_text)
+            canvas.total_w = icon_w + gap + text_width
+            if width is not None: 
+                if width == "responsive":
+                    width = (
+                        text_width + icon_w + gap + 20
+                        if compact else max(200, text_width + icon_w + gap + 30)
+                    )
+                canvas.config(width=width)
+            draw()
+
+        canvas.update_text = update_text
+        def update_text_color(color):
+            nonlocal base_text, base_bd
+            base_text = color
+            base_bd = color
+            draw()
+
+        canvas.update_text_color = update_text_color
+
+        def change_button_state(state):
+            canvas.button_state = state
+            draw()
+
+        canvas.change_button_state = change_button_state
+        return canvas
 
     def add_hover(self, widget, normal, hover):
         widget.bind("<Enter>", lambda e: widget.configure(bg=hover))
         widget.bind("<Leave>", lambda e: widget.configure(bg=normal))
+    
+    def make_rounded_badge(
+        self,
+        frame,
+        content_text,
+        width=108,
+        height=29,
+        radius=14,
+        bg_color="#58358F",
+        outline_color="#7650B8",
+        text_color="#FFFFFF",
+        font=("Segoe UI", 10, "bold"),
+        pady=(4, 0)
+    ):
+        badge = tk.Canvas(
+            frame,
+            width=width,
+            height=height,
+            bg=PANEL,
+            highlightthickness=0,
+            bd=0
+        )
+        badge.pack(anchor="w", pady=pady)
 
-    # endregion
+        # Keep radius within valid bounds
+        radius = min(radius, width / 2, height / 2)
+
+        def draw_rounded_pill(canvas, x1, y1, x2, y2, radius, **kwargs):
+            points = [
+                x1 + radius, y1,
+                x2 - radius, y1,
+                x2, y1,
+                x2, y1 + radius,
+                x2, y2 - radius,
+                x2, y2,
+                x2 - radius, y2,
+                x1 + radius, y2,
+                x1, y2,
+                x1, y2 - radius,
+                x1, y1 + radius,
+                x1, y1
+            ]
+
+            return canvas.create_polygon(
+                points,
+                smooth=True,
+                splinesteps=36,
+                **kwargs
+            )
+
+        draw_rounded_pill(
+            badge,
+            1, 1, width - 1, height - 1,
+            radius=radius,
+            fill=bg_color,
+            outline=outline_color,
+            width=1
+        )
+
+        badge.create_text(
+            width / 2,
+            (height / 2) - 2,
+            text=content_text,
+            fill=text_color,
+            font=font
+        )
+
+        return badge
+    
+    def draw_xp_progress(self, event=None):
+        canvas = self.xp_progress
+
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+
+        if width <= 1:
+            return
+
+        scale = 3
+        w = width * scale
+        h = height * scale
+
+        padding = 5 * scale
+        bar_width = w - (padding * 2)
+
+        bar_height = 12 * scale
+        y1 = (h - bar_height) // 2
+        y2 = y1 + bar_height
+        radius = bar_height // 2
+        
+        percentage = max(0, min(100, self.xp_progress_value))
+        fill_width = int(bar_width * percentage / 100)
+        fill_end = padding + fill_width
+
+        # Base image
+        image = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+
+        # Dark rounded track
+        track = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        track_draw = ImageDraw.Draw(track)
+
+        track_draw.rounded_rectangle(
+            (padding, y1, w - padding, y2),
+            radius=radius,
+            fill="#29264B",
+            outline="#4B4576",
+            width=2
+        )
+
+        image.alpha_composite(track)
+
+        if fill_width > 0:
+            fill_width = max(fill_width, bar_height)
+
+            # Glow mask
+            glow_mask = Image.new("L", (w, h), 0)
+            glow_draw = ImageDraw.Draw(glow_mask)
+
+            glow_draw.rounded_rectangle(
+                (padding, y1 - 1, fill_end, y2 + 1),
+                radius=radius,
+                fill=300
+            )
+
+            glow_mask = glow_mask.filter(
+                ImageFilter.GaussianBlur(4 * scale)
+            )
+
+            # Reduce glow intensity
+            glow_mask = glow_mask.point(
+                lambda p: int(p * 0.65)
+            )
+
+            glow = Image.new("RGBA", (w, h), "#A96BFF")
+            glow.putalpha(glow_mask)
+
+            image.alpha_composite(glow)
+
+            # Rounded fill mask
+            fill_mask = Image.new("L", (w, h), 0)
+            mask_draw = ImageDraw.Draw(fill_mask)
+
+            mask_draw.rounded_rectangle(
+                (padding, y1, fill_end, y2),
+                radius=radius,
+                fill=255
+            )
+
+            # Purple-to-pink gradient
+            gradient = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+
+            colors = [
+                (137, 75, 255),
+                (174, 91, 255),
+                (222, 137, 255)
+            ]
+
+            gradient_draw = ImageDraw.Draw(gradient)
+
+            for x in range(padding, fill_end + 1):
+                t = (x - padding) / max(fill_width, 1)
+
+                if t < 0.5:
+                    local_t = t * 2
+                    c1, c2 = colors[0], colors[1]
+                else:
+                    local_t = (t - 0.5) * 2
+                    c1, c2 = colors[1], colors[2]
+
+                color = tuple(
+                    int(a + (b - a) * local_t)
+                    for a, b in zip(c1, c2)
+                )
+
+                gradient_draw.line(
+                    (x, y1, x, y2),
+                    fill=(*color, 255)
+                )
+
+            gradient.putalpha(fill_mask)
+            image.alpha_composite(gradient)
+
+            # Subtle top reflection
+            highlight = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            highlight_draw = ImageDraw.Draw(highlight)
+
+            highlight_draw.line(
+                (
+                    padding + radius,
+                    y1 + 2 * scale,
+                    max(padding + radius, fill_end - radius),
+                    y1 + 2 * scale
+                ),
+                fill=(255, 255, 255, 105),
+                width=scale
+            )
+
+            highlight.putalpha(
+                Image.composite(
+                    highlight.getchannel("A"),
+                    Image.new("L", (w, h), 0),
+                    fill_mask
+                )
+            )
+
+            image.alpha_composite(highlight)
+
+        # Downscale for smooth edges
+        image = image.resize(
+            (width, height),
+            Image.Resampling.LANCZOS
+        )
+
+        self.xp_progress_photo = ImageTk.PhotoImage(image)
+
+        canvas.delete("all")
+        canvas.create_image(
+            0, 0,
+            image=self.xp_progress_photo,
+            anchor="nw"
+        )
+   
+    def set_xp_progress(self, value):
+        self.xp_progress_value = max(0, min(100, value))
+        self.draw_xp_progress()
+        
+    def draw_rounded_rect(
+        self,
+        canvas,
+        width,
+        height,
+        radius,
+        fill,
+        outline,
+        border_width=1,
+        x_offset=0,
+        y_offset=0,
+        tag="rounded"
+    ):
+        canvas.delete(tag)
+
+        inset = border_width / 2 + 1
+
+        x1 = x_offset + inset
+        y1 = y_offset + inset
+        x2 = x_offset + width - inset
+        y2 = y_offset + height - inset
+
+        r = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
+
+        # Background
+        canvas.create_rectangle(
+            x1 + r, y1, x2 - r, y2,
+            fill=fill, outline="", tags=tag
+        )
+        canvas.create_rectangle(
+            x1, y1 + r, x2, y2 - r,
+            fill=fill, outline="", tags=tag
+        )
+
+        corners = [
+            (x1, y1, x1 + 2*r, y1 + 2*r, 90),
+            (x2 - 2*r, y1, x2, y1 + 2*r, 0),
+            (x2 - 2*r, y2 - 2*r, x2, y2, 270),
+            (x1, y2 - 2*r, x1 + 2*r, y2, 180)
+        ]
+
+        for ax1, ay1, ax2, ay2, start in corners:
+            canvas.create_arc(
+                ax1, ay1, ax2, ay2,
+                start=start, extent=90,
+                style="pieslice",
+                fill=fill, outline="",
+                tags=tag
+            )
+
+        # Border
+        if outline and border_width > 0:
+            for ax1, ay1, ax2, ay2, start in corners:
+                canvas.create_arc(
+                    ax1, ay1, ax2, ay2,
+                    start=start, extent=90,
+                    style="arc",
+                    outline=outline,
+                    width=border_width,
+                    tags=tag
+                )
+
+            canvas.create_line(
+                x1 + r, y1, x2 - r, y1,
+                fill=outline, width=border_width, tags=tag
+            )
+            canvas.create_line(
+                x1 + r, y2, x2 - r, y2,
+                fill=outline, width=border_width, tags=tag
+            )
+            canvas.create_line(
+                x1, y1 + r, x1, y2 - r,
+                fill=outline, width=border_width, tags=tag
+            )
+            canvas.create_line(
+                x2, y1 + r, x2, y2 - r,
+                fill=outline, width=border_width, tags=tag
+            )
+
+    def make_rounded_entry(
+        self,
+        parent,
+        textvariable=None,
+        icon_type=None,
+        width=None,
+        height=38,
+        radius=10,
+        bg_color=PANEL_ALT,
+        outline_color="#454D68",
+        border_width=1,
+        fg_color=DEEP_MUTED,
+        font=("Segoe UI", 9),
+        icon_size=(18, 18),
+        icon_padx=(15, 15),
+        container_padx=10,
+        container_pady=0,
+        inner_padx=10,
+        insert_color=None
+    ):
+        canvas = tk.Canvas(
+            parent,
+            height=height,
+            width=width or 300,
+            bg=parent.cget("bg"),
+            highlightthickness=0,
+            bd=0
+        )
+        canvas.pack(fill="x", expand=True, pady=container_pady, padx=container_padx)
+
+        entry = tk.Entry(
+            canvas,
+            textvariable=textvariable,
+            bg=bg_color,
+            fg=fg_color,
+            insertbackground=insert_color or fg_color,
+            relief="flat",
+            bd=0,
+            font=font
+        )
+
+        entry_x = inner_padx
+
+        if icon_type:
+            icon_left, icon_right = icon_padx
+
+            icon = self.create_icon(
+                canvas,
+                icon_type,
+                size=icon_size,
+                side=("left", icon_padx),
+                bg=bg_color
+            )
+
+            canvas.create_window(
+                icon_left, height // 2,
+                window=icon,
+                anchor="w"
+            )
+
+            entry_x = icon_left + icon_size[0] + icon_right
+
+        entry_window = canvas.create_window(
+            entry_x,
+            height // 2,
+            window=entry,
+            anchor="w",
+            height=height - 12
+        )
+
+        def resize(event):
+            self.draw_rounded_rect(
+                canvas,
+                event.width,
+                height,
+                radius,
+                bg_color,
+                outline_color,
+                border_width,
+                tag="resize"
+            )
+
+            canvas.itemconfig(
+                entry_window,
+                width=max(1, event.width - entry_x - inner_padx)
+            )
+
+        canvas.bind("<Configure>", resize)
+
+        return canvas, entry
+   
+    def create_custom_dropdown(
+        self,
+        parent,
+        variable,
+        values,
+        on_select=None,
+        height=36,
+        width=12,
+        menu_attr="custom_menu",
+        bg="#222A3D",
+        fg="#E8EAF2",
+        accent="#A78BFA",
+        font=("Segoe UI", 9),
+        pady=6,
+        radius=9,
+        border_color="#303A52",
+        arrow_size=(16, 16)
+    ):
+        font_obj = tkfont.Font(font=font)
+        text_width = max(
+            font_obj.measure(variable.get() or ""),
+            font_obj.measure(" " * width)
+        )
+
+        canvas_width = text_width + arrow_size[0] + 34
+
+        picker = tk.Canvas(
+            parent,
+            width=canvas_width + 2,
+            height=height + 2,
+            bg=parent.cget("bg"),
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2"
+        )
+        picker.pack(side="left", padx=(0, 6), fill="none", expand=False)
+
+        self.draw_rounded_rect(
+            picker,
+            canvas_width + 2,
+            height + 2,
+            radius,
+            bg,
+            border_color,
+            tag="dropdown-input"
+        )
+
+        text_id = picker.create_text(
+            10,
+            height // 2,
+            text=variable.get(),
+            anchor="w",
+            fill=fg,
+            font=font
+        )
+
+        arrow_image = StarIcon.svg_to_photo(
+            "chevron-down.svg",
+            size=arrow_size
+        )
+
+        icon_id = picker.create_image(
+            canvas_width - 10,
+            height // 2,
+            image=arrow_image,
+            anchor="e"
+        )
+
+        picker._arrow_image = arrow_image
+
+        variable.trace_add(
+            "write",
+            lambda *_: picker.itemconfig(text_id, text=variable.get())
+        )
+
+        def render_menu(event=None):
+            self.render_custom_dropdown_list(
+                picker=picker,
+                variable=variable,
+                values=values() if callable(values) else values,
+                on_select=on_select,
+                menu_attr=menu_attr
+            )
+
+        def set_hover(hovered):
+            picker.itemconfig(
+                "background",
+                fill="#303A52" if hovered else bg
+            )
+
+        picker.bind("<Button-1>", render_menu)
+        picker.bind("<Enter>", lambda e: set_hover(True))
+        picker.bind("<Leave>", lambda e: set_hover(False))
+
+        return picker, text_id, icon_id
+ 
+    def render_custom_dropdown_list(
+        self,
+        picker,
+        variable,
+        values,
+        on_select=None,
+        width=19,
+        item_bg="#1A2030",
+        hover_bg="#303A52",
+        selected_bg="#222A3D",
+        fg="#E8EAF2",
+        selected_fg="#A78BFA",
+        border="#303A52",
+        gap=1,
+        menu_attr="custom_menu"
+    ):
+        # Toggle existing menu
+        existing_menu = getattr(self, menu_attr, None)
+
+        if existing_menu and existing_menu.winfo_exists():
+            existing_menu.destroy()
+            setattr(self, menu_attr, None)
+            return
+
+        menu = tk.Toplevel(self.root)
+        setattr(self, menu_attr, menu)
+
+        menu.overrideredirect(True)
+        menu.configure(bg=border)
+
+        try:
+            menu.attributes("-alpha", 0.0)
+            supports_fade = True
+        except tk.TclError:
+            supports_fade = False
+
+        container = tk.Frame(menu, bg=item_bg)
+
+        container.pack(
+            fill="both",
+            expand=True,
+            padx=1,
+            pady=1
+        )
+
+        # Calculate a width that accommodates long options
+        font = tkfont.Font(family="Segoe UI", size=9)
+
+        max_text_width = max(
+            (font.measure(str(value)) for value in values),
+            default=font.measure(" " * width)
+        )
+
+        menu_width = min(max(max_text_width + 58, 180), 340)
+
+        # Wrapped menu items
+        for value in values:
+            selected = value == variable.get()
+
+            item_frame = tk.Frame(
+                container,
+                bg=selected_bg if selected else item_bg,
+                cursor="hand2"
+            )
+            item_frame.pack(fill="x", padx=2, pady=1)
+
+            indicator = tk.Label(
+                item_frame,
+                text="✦" if selected else "",
+                bg=selected_bg if selected else item_bg,
+                fg=selected_fg,
+                font=("Segoe UI", 9, "bold"),
+                width=3
+            )
+            indicator.pack(side="left", padx=(7, 0), pady=7)
+
+            item_label = tk.Label(
+                item_frame,
+                text=str(value),
+                bg=selected_bg if selected else item_bg,
+                fg=selected_fg if selected else fg,
+                font=("Segoe UI", 9),
+                anchor="w",
+                justify="left",
+                wraplength=menu_width - 55,
+                padx=5,
+                pady=7
+            )
+            item_label.pack(side="left", fill="x", expand=True)
+
+            def select_item(v=value):
+                if not menu.winfo_exists():
+                    return
+
+                close_menu()
+
+                if variable.get() != v:
+                    variable.set(v)
+
+                    if on_select:
+                        on_select()
+
+            def on_enter(event, frame=item_frame, label=item_label,
+                        mark=indicator):
+                for widget in (frame, label, mark):
+                    widget.configure(bg=hover_bg)
+
+            def on_leave(event, frame=item_frame, label=item_label,
+                        mark=indicator, is_selected=selected):
+                color = selected_bg if is_selected else item_bg
+
+                for widget in (frame, label, mark):
+                    widget.configure(bg=color)
+
+            for widget in (item_frame, item_label, indicator):
+                widget.bind("<Button-1>", lambda e, v=value: select_item(v))
+                widget.bind("<Enter>", on_enter)
+                widget.bind("<Leave>", on_leave)
+
+        menu.update_idletasks()
+
+        menu_height = container.winfo_reqheight() + 2
+        menu_width = max(menu_width, container.winfo_reqwidth() + 2)
+
+        picker_x = picker.winfo_rootx()
+        picker_y = picker.winfo_rooty()
+
+        # Open above the picker
+        x = picker_x
+        y = picker_y - menu_height - gap
+
+        # Keep menu within screen bounds
+        screen_width = menu.winfo_screenwidth()
+        screen_height = menu.winfo_screenheight()
+
+        x = min(x, screen_width - menu_width)
+        x = max(0, x)
+
+        if y < 0:
+            y = picker_y + picker.winfo_height() + gap
+
+        y = min(y, screen_height - menu_height)
+        y = max(0, y)
+
+        menu.attributes("-topmost", True)
+        menu.geometry(
+            f"{menu_width}x{menu_height}+{x}+{y}"
+        )
+
+        # Fade animation — no window resizing
+        def fade_in(step=0):
+            if not menu.winfo_exists():
+                return
+
+            alpha = min(step / 5, 1.0)
+
+            try:
+                menu.attributes("-alpha", alpha)
+            except tk.TclError:
+                return
+
+            if alpha < 1:
+                menu.after(35, lambda: fade_in(step + 1))
+
+        def close_menu():
+            if not menu.winfo_exists():
+                return
+
+            if getattr(menu, "_closing", False):
+                return
+
+            menu._closing = True
+
+            if not supports_fade:
+                menu.destroy()
+                return
+
+            menu.destroy()
+
+        # Close when clicking outside the menu
+        def check_outside_click(event=None):
+            if not menu.winfo_exists():
+                return
+
+            if getattr(menu, "_closing", False):
+                return
+
+            focused = menu.focus_get()
+
+            if focused is not None:
+                current = focused
+
+                while current is not None:
+                    if current == menu:
+                        return
+                    current = getattr(current, "master", None)
+
+            pointer_x = self.root.winfo_pointerx()
+            pointer_y = self.root.winfo_pointery()
+
+            inside_menu = (
+                x <= pointer_x <= x + menu_width
+                and y <= pointer_y <= y + menu_height
+            )
+
+            if not inside_menu:
+                close_menu()
+
+        def on_escape(event=None):
+            close_menu()
+
+        menu.bind("<Escape>", on_escape)
+        menu.bind("<FocusOut>", lambda e: menu.after(80, check_outside_click))
+
+        menu.focus_force()
+
+        if supports_fade:
+            fade_in()
+        else:
+            try:
+                menu.attributes("-alpha", 1.0)
+            except tk.TclError:
+                pass
+
+        return menu
+ 
+   # endregion
 
     # region ---------------- FUNCTIONS ----------------
 
@@ -4319,77 +6385,7 @@ class FocusTimer:
             "subtitle": "There are no limits left to inherit.",
             "xp_required": 3000
         }
-
-    def update_xp_display(self):
-        current_xp, requirement = self.calculate_progression()
-        realm = self.get_realm()
-
-        # Current realm
-        self.rank_label.config(text=realm["name"].upper())
-        self.level_label.config(text=f"LEVEL {self.level}")
-        self.rank_description.config(text=realm["description"])
-
-        # XP progress
-        percentage = (
-            min(100, current_xp / requirement * 100)
-            if requirement > 0 else 100
-        )
-
-        remaining = max(0, requirement - current_xp)
-
-        self.xp_label.config(
-            text=f"{current_xp:,} / {requirement:,} XP"
-        )
-
-        self.xp_percentage_label.config(
-            text=f"{percentage:.0f}%"
-        )
-
-        self.xp_progress.configure(
-            maximum=max(1, requirement)
-        )
-        self.xp_progress["value"] = current_xp
-
-        self.total_xp_label.config(
-            text=f"{remaining:,} XP to next level"
-        )
-
-        # Next cultivation realm
-        realms = REALMS
-
-        current_index = next(
-            (
-                i for i, r in enumerate(realms)
-                if r[2] == realm["name"]
-            ),
-            -1
-        )
-
-        if current_index >= 0 and current_index + 1 < len(realms):
-            next_realm = realms[current_index + 1]
-            self.next_realm_label.config(
-                text=f"✨  NEXT BREAKTHROUGH: {next_realm[2].upper()}"
-            )
-        else:
-            self.next_realm_label.config(
-                text="✨  HIGHEST CULTIVATION REALM ACHIEVED"
-            )
-
-        # Dashboard statistics
-        self.dashboard_streak_card.config(
-            text=f"🔥  {self.getting_started_streak} "
-                f"{'day' if self.getting_started_streak == 1 else 'days'}",
-        )
-
-        self.dashboard_xp_card.config(
-            text=f"✦  {self.xp} XP"
-        )
-
-        self.dashboard_bounty_card.config(
-            text=f"⚔  {self.total_completed_bounties} "
-                f"{'Bounty' if self.total_completed_bounties == 1 else 'Bounties'}"
-        )
-        
+ 
     def award_xp(self, amount):
         old_level = self.level
         old_realm = self.get_realm(old_level)["name"]
@@ -4408,7 +6404,7 @@ class FocusTimer:
         if self.level == 0 and self.xp < 0:
             self.xp = 0
 
-        self.update_xp_display()
+        self.schedule_update("dashboard", "ui_render_dashboard_xp_display")
 
         new_realm = self.get_realm()["name"]
 
@@ -4425,265 +6421,6 @@ class FocusTimer:
     
     # endregion
 
-    # region Next Cultivation Variations
-    def update_next_cultivation_display(self):
-        grouped = {
-            "current": [],
-            "completed": [],
-            "postponed": []
-        }
-
-        today_str = date.today().isoformat()
-
-        for project, items in self.projects.items():
-            for item in items:
-                status = item.get("status", "current").lower()
-
-                if status not in grouped:
-                    status = "current"
-
-                if item.get("is_daily", False) and item.get("last_done_date") == today_str:
-                    status = "completed"
-
-                grouped[status].append((project, item))
-
-        bounty_content = self.next_cultivation_bounty_content
-
-        for child in bounty_content.winfo_children():
-            child.destroy()
-
-        current_bounties = grouped["current"]
-
-        if current_bounties:
-            if not hasattr(self, "next_cultivation_index"):
-                self.next_cultivation_index = 0
-
-            self.next_cultivation_index %= len(current_bounties)
-
-            self.update_next_cultivation_has_bounty(
-                current_bounties[self.next_cultivation_index],
-                wrap_size=500,
-                has_another=len(current_bounties) > 1
-            )
-
-        elif grouped["completed"]:
-            self.next_cultivation_index = 0
-            self.next_cultivation_finished_bounties(500)
-
-        else:
-            self.next_cultivation_index = 0
-            self.next_cultivation_empty(500)
-
-    def show_next_cultivation_recommendation(self):
-        self.next_cultivation_index += 1
-        self.update_next_cultivation_display()
-
-    def update_next_cultivation_has_bounty(
-        self, bounty_data, wrap_size, has_another=False
-    ):
-        project_name, bounty = bounty_data
-        bounty_content = self.next_cultivation_bounty_content
-
-        # Header
-        header = tk.Frame(bounty_content, bg="#211F38")
-        header.pack(fill="x")
-
-        tk.Label(
-            header,
-            text="✦  YOUR NEXT CULTIVATION",
-            bg="#211F38",
-            fg="#A78BFA",
-            font=("Segoe UI", 8, "bold")
-        ).pack(side="left")
-
-        # Header actions
-        header_actions = tk.Frame(header, bg="#211F38")
-        header_actions.pack(side="right")
-
-        tk.Label(
-            header_actions,
-            text="RECOMMENDED",
-            bg="#342C50",
-            fg="#C4B5FD",
-            font=("Segoe UI", 7, "bold"),
-            padx=7,
-            pady=3
-        ).pack(side="left", padx=(0, 6))
-
-        if has_another:
-            another_btn = tk.Button(
-                header_actions,
-                text="↻ Another",
-                command=self.show_next_cultivation_recommendation,
-                bg="#302B49",
-                fg="#C4B5FD",
-                activebackground="#40375E",
-                activeforeground="#E9D5FF",
-                font=("Segoe UI", 7, "bold"),
-                relief="flat",
-                bd=0,
-                padx=8,
-                pady=4,
-                cursor="hand2"
-            )
-            another_btn.pack(side="left")
-
-        # Quest title
-        tk.Label(
-            bounty_content,
-            text=bounty.get("task"),
-            bg="#211F38",
-            fg="#F1F0FF",
-            font=("Segoe UI", 11, "bold"),
-            anchor="w",
-            # wraplength=wrap_size,
-            justify="left"
-        ).pack(fill="x", pady=(12, 5))
-
-        # Category and estimated time
-        tk.Label(
-            bounty_content,
-            text=f"Sect: {project_name}   ·   Estimated time: {bounty.get("duration")} minutes",
-            bg="#211F38",
-            fg="#A5A2BC",
-            font=("Segoe UI", 8),
-            anchor="w"
-        ).pack(fill="x", pady=(0, 10))
-
-        # Reward and availability
-        info_row = tk.Frame(bounty_content, bg="#211F38")
-        info_row.pack(fill="x")
-
-        # Left actions group
-        actions = tk.Frame(info_row, bg="#211F38")
-        actions.pack(side="left")
-
-        tk.Label(
-            actions,
-            text=f"✦  {bounty.get('reward_xp')} XP",
-            bg="#302B49",
-            fg="#C4B5FD",
-            font=("Segoe UI", 9, "bold"),
-            padx=9,
-            pady=5
-        ).pack(side="left", padx=(0, 8))
-
-        tk.Button(
-            actions,
-            text="Start  →",
-            command=lambda: self.choose_bounty(bounty),
-            bg="#8B6CF6",
-            fg="#FFFFFF",
-            activebackground="#7556D9",
-            activeforeground="#FFFFFF",
-            font=("Segoe UI", 8, "bold"),
-            relief="flat",
-            bd=0,
-            padx=12,
-            pady=5,
-            cursor="hand2"
-        ).pack(side="left")
-
-        # Availability stays on the far right
-        tk.Label(
-            info_row,
-            text="●  AVAILABLE",
-            bg="#193B35",
-            fg="#6EE7B7",
-            font=("Segoe UI", 7, "bold"),
-            padx=8,
-            pady=5
-        ).pack(side="right")
-
-        # Footer hint
-        tk.Label(
-            bounty_content,
-            text="Your next challenge awaits.",
-            bg="#211F38",
-            fg="#77758F",
-            font=("Segoe UI", 7),
-            anchor="w"
-        ).pack(fill="x", pady=(10, 0))
-
-    def next_cultivation_finished_bounties(self, wrap_size):
-        bounty_content = self.next_cultivation_bounty_content
-
-        tk.Label(
-            bounty_content,
-            text="✦  CULTIVATION STATUS",
-            bg="#211F38",
-            fg="#A78BFA",
-            font=("Segoe UI", 8, "bold")
-        ).pack(anchor="w")
-
-        tk.Label(
-            bounty_content,
-            text="No active bounties left!",
-            bg="#211F38",
-            fg="#F1F0FF",
-            font=("Segoe UI", 11, "bold")
-        ).pack(anchor="w", pady=(12, 5))
-
-        tk.Label(
-            bounty_content,
-            text="You've completed all your available quests. "
-                "Take a moment to appreciate your progress.",
-            bg="#211F38",
-            fg="#A5A2BC",
-            font=("Segoe UI", 8),
-            wraplength=wrap_size,
-            justify="left"
-        ).pack(anchor="w")
-
-        tk.Label(
-            bounty_content,
-            text="✧  Your next challenge awaits.",
-            bg="#211F38",
-            fg="#C4B5FD",
-            font=("Segoe UI", 8, "bold")
-        ).pack(anchor="w", pady=(12, 0))
-   
-    def next_cultivation_empty(self, wrap_size):
-        bounty_content = self.next_cultivation_bounty_content
-
-        tk.Label(
-            bounty_content,
-            text="✦  YOUR CULTIVATION JOURNEY",
-            bg="#211F38",
-            fg="#A78BFA",
-            font=("Segoe UI", 8, "bold")
-        ).pack(anchor="w")
-
-        tk.Label(
-            bounty_content,
-            text="A journey yet to begin.",
-            bg="#211F38",
-            fg="#F1F0FF",
-            font=("Segoe UI", 11, "bold")
-        ).pack(anchor="w", pady=(12, 5))
-
-        tk.Label(
-            bounty_content,
-            text="No active or completed tasks just yet. "
-                "Every great cultivator starts somewhere. "
-                "Your first step is waiting.",
-            bg="#211F38",
-            fg="#A5A2BC",
-            font=("Segoe UI", 8),
-            wraplength=wrap_size,
-            justify="left"
-        ).pack(anchor="w")
-
-        tk.Label(
-            bounty_content,
-            text="✧  Small steps lead to great things.",
-            bg="#211F38",
-            fg="#C4B5FD",
-            font=("Segoe UI", 8, "bold")
-        ).pack(anchor="w", pady=(12, 0))
-    
-    # endregion
-
     # region Sects
     
     def create_project(self, name):
@@ -4692,33 +6429,26 @@ class FocusTimer:
 
         self.active_project = name
         self.refresh_project_picker()
-        self.render_mission_board()
+        self.schedule_update("board", "render_mission_board")
         self.save_data()
 
     def change_project(self):
         self.active_project = self.project_var.get()
         # self.selected_mission = None
-        self.render_mission_board(reset=True)
+        self.schedule_update("board", "render_mission_board", {"reset_scroll": True})
 
     def refresh_project_picker(self):
+        # Ensure there is always a valid active project
         if self.active_project not in self.projects:
             self.active_project = next(iter(self.projects), "General")
             self.projects.setdefault(self.active_project, [])
 
+        # Refresh active project picker
         self.project_var.set(self.active_project)
 
-        # Update custom picker display
-        self.project_label.config(
-            text=self.active_project
-        )
-
-        # Update custom picker display
+        # Keep bounty project selection valid
         if self.bounty_project_var.get() not in self.projects:
             self.bounty_project_var.set(self.active_project)
-
-        self.bounty_project_label.config(
-            text=self.bounty_project_var.get()
-        )
         
     # endregion
 
@@ -4727,17 +6457,21 @@ class FocusTimer:
     def current_missions(self): # get current missions
         return self.projects.setdefault(self.active_project, [])
     
-    def current_grouped_missions(self): # get current missions
+    def current_grouped_missions(self):
         missions = self.current_missions()
 
         today_str = date.today().isoformat()
+
         grouped = {
             "current": [],
             "completed": [],
             "postponed": []
         }
 
+        # mission_lookup = {}
+
         for item in missions:
+            # mission_id = item.get("task")
             status = item.get("status", "current").lower()
 
             if status not in grouped:
@@ -4745,18 +6479,25 @@ class FocusTimer:
 
             is_daily = item.get("is_daily", False)
             last_done = item.get("last_done_date")
-            streak = item.get("streak_count", 0)
+            # streak = item.get("streak_count", 0)
 
-            done_today = (
-                is_daily and last_done == today_str
-            )
+            done_today = is_daily and last_done == today_str
 
-            if done_today: status = "completed"
+            if done_today:
+                status = "completed"
+
             grouped[status].append(item)
-        
-        return grouped, today_str
+
+            # mission_lookup[mission_id] = {
+            #     "item": item,
+            #     "status": status,
+            #     "done_today": done_today
+            # }
+
+        return grouped, today_str#, mission_lookup
     
     def change_mission_status(self, mission, new_status):
+        # start = time.perf_counter()
         today = date.today()
         today_str = today.isoformat()
 
@@ -4827,7 +6568,7 @@ class FocusTimer:
                 xp_reward=reward
             )
 
-            self.update_xp_display()
+            self.schedule_update("dashboard", "ui_render_dashboard_xp_display")
             self.status_label.config(
                 text=(
                     f"✦ Daily bounty mission completed! +{reward} XP "
@@ -4872,7 +6613,8 @@ class FocusTimer:
 
         # ---------- SAVE AND REFRESH ----------
         self.save_data()
-        self.render_mission_board()
+        self.schedule_update("board", "render_mission_board")
+        # print("Render setup:", time.perf_counter() - start)
 
     def undo_daily_completion(self, mission):
         today_str = date.today().isoformat()
@@ -4895,7 +6637,7 @@ class FocusTimer:
             xp_reward=-int(mission.get("reward_xp", 0))
         )
 
-        self.render_mission_board()
+        self.schedule_update("board", "render_mission_board")
 
     def reset_daily_streak(self, mission, done_today):
         mission["previous_done_date"] = None
@@ -4915,7 +6657,7 @@ class FocusTimer:
         else:
             self.save_data()
 
-        self.render_mission_board()
+        self.schedule_update("board", "render_mission_board")
         
     def add_mission(self):
         if self.running and self.chosen_bounty is not None:
@@ -4980,7 +6722,7 @@ class FocusTimer:
         self.projects.setdefault(project, []).append(mission)
 
         self.save_data()
-        self.render_mission_board()
+        self.schedule_update("board", "render_mission_board")
 
         self.task_var.set("")
         self.minutes_var.set("25")
@@ -5004,7 +6746,7 @@ class FocusTimer:
             if hasattr(self, "save_data"):
                 self.save_data()
 
-            self.render_mission_board()
+            self.schedule_update("board", "render_mission_board")
 
         task_name = mission.get("task", "Unknown Bounty")
 
@@ -5050,7 +6792,7 @@ class FocusTimer:
 
     def start_session(self):
         if self.running:
-            self.session_in_progress()
+            # self.session_in_progress()
             return
 
         try:
@@ -5082,8 +6824,8 @@ class FocusTimer:
     
         self.timer_label.config(font=("Segoe UI", 29, "bold"))
         self.progress_value = 0
-        self.stop_button.config(state="normal")
-        self.start_button.config(state="disabled")
+        self.start_button.change_button_state(False)
+        self.stop_button.change_button_state(True)
         self.status_label.config(text="Session in progress...")
         self.overlay_title.config(text="CULTIVATION IN PROGRESS...")
         self.overlay.deiconify()
@@ -5128,8 +6870,8 @@ class FocusTimer:
         self.overlay_title.config(text="MISSION ACCOMPLISHED")
         self.update_overlay_progress(100)
 
-        self.stop_button.config(state="disabled")
-        self.start_button.config(state="normal")
+        self.stop_button.change_button_state(False)
+        self.start_button.change_button_state(True)
         self.status_label.config(text="Session completed!")
 
         self.root.deiconify()
@@ -5154,8 +6896,8 @@ class FocusTimer:
         )
         self.overlay_title.config(text="SESSION ENDED")
 
-        self.stop_button.config(state="disabled")
-        self.start_button.config(state="normal")
+        self.stop_button.change_button_state(False)
+        self.start_button.change_button_state(True)
         self.status_label.config(text="Session stopped.")
 
         self.root.deiconify()
@@ -5374,9 +7116,9 @@ class FocusTimer:
         is_dialog = True, 
         with_title_bar = True,
         bg = "#171923",
-        start_hidden = False
+        start_hidden = False,
+        close_rollback = True
     ):
-
         popup.overrideredirect(True)
         popup.resizable(False, False)
         popup.attributes("-topmost", True)
@@ -5412,7 +7154,7 @@ class FocusTimer:
             close_btn = tk.Button(
                 title_bar,
                 text="×",
-                command=lambda: self.close_custom_popup(popup),
+                command=lambda: self.close_custom_popup(popup, close_rollback),
                 bg="#222638",
                 fg="#B8BED0",
                 activebackground="#A83246",
@@ -5452,212 +7194,20 @@ class FocusTimer:
         popup_container.pack(fill="both", expand=True, padx=1, pady=1)
         popup_container.configure(bg=bg)
 
-        # Custom title bar
+        self._current_popups.append(popup)
         return popup_container
 
-    def close_custom_popup(self, popup):
+    def close_custom_popup(self, popup, close_rollback=True):
         try:
             popup.grab_release()
         except tk.TclError:
             pass
 
+        self._current_popups.remove(popup)
         popup.destroy()
+        if close_rollback: self.show_window() # not if it was the popup of minimize or first session
 
-    def create_custom_dropdown(
-        self,
-        parent,
-        variable,
-        values,
-        on_select=None,
-        width=12,
-        menu_attr="custom_menu",
-        bg="#222A3D",
-        fg="#E8EAF2",
-        accent="#A78BFA",
-        font=("Segoe UI", 9),
-        pady=6,
-        arrow="▾"
-    ):
-        picker = tk.Frame(
-            parent,
-            bg=bg,
-            highlightbackground="#303A52",
-            highlightthickness=1,
-            cursor="hand2"
-        )
-
-        picker.pack(side="left", padx=(0, 6))
-
-        label = tk.Label(
-            picker,
-            textvariable=variable,
-            bg=bg,
-            fg=fg,
-            font=font,
-            padx=0,
-            pady=pady,
-            cursor="hand2",
-            width=width,
-            anchor="w"
-        )
-        label.pack(side="left", padx=(10, 0))
-
-        arrow_label = tk.Label(
-            picker,
-            text=arrow,
-            bg=bg,
-            fg="#929BB2",
-            font=("Segoe UI Symbol", 10),
-            padx=9,
-            pady=5,
-            cursor="hand2"
-        )
-        arrow_label.pack(side="left")
-
-        def render_menu(event=None):
-            self.render_custom_dropdown(
-                picker=picker,
-                variable=variable,
-                values=values() if callable(values) else values,
-                on_select=on_select,
-                menu_attr=menu_attr
-            )
-
-        def on_enter(event=None):
-            picker.config(bg="#303A52")
-            label.config(bg="#303A52")
-            arrow_label.config(bg="#303A52")
-
-        def on_leave(event=None):
-            picker.config(bg=bg)
-            label.config(bg=bg)
-            arrow_label.config(bg=bg)
-
-        for widget in (picker, label, arrow_label):
-            widget.bind("<Button-1>", render_menu)
-            widget.bind("<Enter>", on_enter)
-            widget.bind("<Leave>", on_leave)
-
-        return picker, label, arrow_label
-    
-    def render_custom_dropdown(
-        self,
-        picker,
-        variable,
-        values,
-        on_select=None,
-        width=19,
-        item_bg="#1A2030",
-        hover_bg="#303A52",
-        selected_bg="#222A3D",
-        fg="#E8EAF2",
-        selected_fg="#A78BFA",
-        border="#303A52",
-        gap=1,
-        menu_attr="custom_menu"
-    ):
-        # Toggle existing menu
-        existing_menu = getattr(self, menu_attr, None)
-
-        if existing_menu and existing_menu.winfo_exists():
-            existing_menu.destroy()
-            return
-
-        menu = tk.Toplevel(self.root)
-        setattr(self, menu_attr, menu)
-
-        menu.overrideredirect(True)
-        menu.configure(bg=border)
-
-        container = tk.Frame(
-            menu,
-            bg=item_bg,
-            highlightbackground=border,
-            highlightthickness=1
-        )
-        container.pack()
-
-        for value in values:
-            selected = value == variable.get()
-
-            item = tk.Label(
-                container,
-                text=f"{'✦  ' if selected else '    '}{value}",
-                bg=selected_bg if selected else item_bg,
-                fg=selected_fg if selected else fg,
-                font=("Segoe UI", 9),
-                anchor="w",
-                padx=12,
-                pady=8,
-                width=width,
-                cursor="hand2"
-            )
-            item.pack(fill="x")
-
-            def select_item(v=value):
-                menu.destroy()
-
-                if variable.get() != v:
-                    variable.set(v)
-
-                    if on_select:
-                        on_select()
-
-            item.bind(
-                "<Button-1>",
-                lambda e, callback=select_item: callback()
-            )
-
-            item.bind(
-                "<Enter>",
-                lambda e, w=item: w.config(bg=hover_bg)
-            )
-
-            item.bind(
-                "<Leave>",
-                lambda e, w=item, s=selected: w.config(
-                    bg=selected_bg if s else item_bg
-                )
-            )
-
-        menu.update_idletasks()
-
-        menu_width = menu.winfo_reqwidth()
-        menu_height = menu.winfo_reqheight()
-
-        x = picker.winfo_rootx()
-        picker_y = picker.winfo_rooty()
-
-        # Always open above the picker
-        y = picker_y - menu_height - gap
-
-        menu.geometry(f"{menu_width}x{menu_height}+{x}+{y}")
-
-        def close_menu(event=None):
-            if not menu.winfo_exists():
-                return
-
-            clicked_widget = self.root.winfo_containing(
-                self.root.winfo_pointerx(),
-                self.root.winfo_pointery()
-            )
-
-            def is_child_of(widget, parent):
-                while widget:
-                    if widget == parent:
-                        return True
-                    widget = widget.master
-                return False
-
-            if is_child_of(clicked_widget, picker):
-                return
-
-            menu.destroy()
-
-        menu.bind("<FocusOut>", close_menu)
-        menu.focus_force()  
-        return menu
-    # endregion
+  # endregion
 
     # region ---------------- HISTORY ----------------
 
@@ -5682,7 +7232,7 @@ class FocusTimer:
 
         self.history.insert(0, record)
         self.save_data()
-        self.render_mission_log()
+        self.schedule_update("history", "render_mission_log")
 
     def confirm_reset_cultivation(self):
         def on_confirm():
@@ -5708,9 +7258,9 @@ class FocusTimer:
                         })
 
             self.save_data()
-            self.render_mission_log()
-            self.render_mission_board()
-            self.update_xp_display()
+            self.schedule_update("history", "render_mission_log")
+            self.schedule_update("board", "render_mission_board")
+            self.schedule_update("dashboard", "ui_render_dashboard_xp_display")
         
         if self.running:
             self.render_message_popup(
@@ -5722,9 +7272,10 @@ class FocusTimer:
 
     def confirm_clear_history(self):
         def clear_history():
-            self.history.clear()
-            self.render_mission_log()
-            self.save_data()
+            if self.history:
+                self.history.clear()
+                self.schedule_update("history", "render_mission_log")
+                self.save_data()
             
         self.render_confirmation_popup(
             "CLEAR CULTIVATION HISTORY?",
@@ -5732,24 +7283,25 @@ class FocusTimer:
             clear_history
         )
 
-
     # endregion
 
     # region ---------------- TUTORIALS --------------
     def check_tutorial(self, k):
         if self.tutorials.get(k, False):
+            # print("Tutorial already done", k)
             return
 
         tutorial = TUTORIAL_MESSAGES.get(k)
-
         if not tutorial:
+            print("Tutorial message not found", k)
             return
 
         popup = self.render_message_popup(
             title=tutorial["title"],
             description=tutorial["description"],
             wrapsize=tutorial.get("wrapsize", 300),
-            is_welcome=True
+            is_welcome=True,
+            close_rollback=k not in ("first_session", "minimize")
         )
 
         self.tutorials[k] = True
@@ -5761,10 +7313,79 @@ class FocusTimer:
         return popup
     
     # endregion
-                
+
+    # region ---------------- ICONS --------------
+
+    def create_star_icon(self, frame, color, size, filled=False, glow_radius=10, glow_strength=0.6):
+        color = color or StarIconColors.DEEP_GOLD
+        size = size or (22, 22)
+
+        if filled == False:
+            star_svg = StarIcon.make_star_svg_hollow(color=color, glow_radius=glow_radius, glow_strength=glow_strength, reflective=True, reflection_strength=0)
+        else:
+            star_svg = StarIcon.make_star_svg(color=color, glow_radius=glow_radius, glow_strength=glow_strength, reflective=True, reflection_strength=0)
+
+        star_image = StarIcon.svg_to_photo(star_svg, size=size)
+
+        # frame = tk.Frame(heading, bg=PANEL)
+        # frame.pack(anchor="w")
+
+        star_label = tk.Label(
+            frame,
+            image=star_image,
+            bg=PANEL
+        )
+        star_label.pack(side="left", padx=(0, 5))
+
+        # Keep image reference alive
+        if not hasattr(self, "_card_star_images"):
+            self._card_star_images = []
+
+        self._card_star_images.append(star_image)
+        return star_label     
+
+    def create_icon(self, frame, icon_type, size, side="left", glow=False, bg=PANEL, star = (True, StarIconColors.DEEP_GOLD)):
+        size = size or (32, 32)
+
+        if icon_type == "star":
+            if star[0] == False:
+                icon = StarIcon.make_star_svg_hollow(color=star[1], glow_radius=10, glow_strength=0.6, reflective=True, reflection_strength=0)
+            else:
+                icon = StarIcon.make_star_svg(color=star[1], glow_radius=10, glow_strength=0.6, reflective=True, reflection_strength=0)
+        else:
+            icon = icon_type+".svg"
+
+        star_image = StarIcon.svg_to_photo(icon, size=size, glow=glow)
+
+        # frame = tk.Frame(heading, bg=PANEL)
+        # frame.pack(anchor="w")
+
+        star_label = tk.Label(
+            frame,
+            image=star_image,
+            bg=bg
+        )
+
+        if isinstance(side, tuple):
+            star_label.pack(side=side[0], padx=side[1])
+        else:
+            star_label.pack(
+                side=side,
+                padx=(0, 5) if side == "left" else (5, 0)
+            )
+            
+        # Keep image reference alive
+        if not hasattr(self, "_card_star_images"):
+            self._card_star_images = []
+
+        self._card_star_images.append(star_image)
+        return star_label     
+
+    # endregion
+
 if __name__ == "__main__":
     root = tk.Tk()
-    app = FocusTimer(root)
+    app = CultivationRealmMain(root)
     
     try:
         root.mainloop()

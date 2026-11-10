@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="64" height="72" viewBox="0 0 64 72">
+
+    <defs>
+
+        <!-- Warm golden surface -->
+        <linearGradient id="metalGradient"
+            x1="15%" y1="5%"
+            x2="85%" y2="100%">
+
+            <stop offset="0%" stop-color="#FFFDEB"/>
+            <stop offset="20%" stop-color="#FFF2C4"/>
+            <stop offset="42%" stop-color="#FFE08A"/>
+            <stop offset="70%" stop-color="#FFC45E"/>
+            <stop offset="100%" stop-color="#FFB944"/>
+        </linearGradient>
+
+        <!-- Soft top-left illumination -->
+        <radialGradient id="specularGradient"
+            cx="25%" cy="18%" r="75%">
+
+            <stop offset="0%" stop-color="#FFFFFF"
+                  stop-opacity="0.95"/>
+            <stop offset="35%" stop-color="#FFF8D8"
+                  stop-opacity="0.45"/>
+            <stop offset="100%" stop-color="#FFFFFF"
+                  stop-opacity="0"/>
+        </radialGradient>
+
+        <!-- Star clipping -->
+        <clipPath id="starClip">
+            <path d="
+                M32 4
+                C36.5 21 42 27 60 36
+                C42 43 36.5 49 32 68
+                C27.5 49 22 43 4 36
+                C22 27 27.5 21 32 4
+                Z"/>
+        </clipPath>
+
+        <!-- Soft golden glow -->
+        <filter id="glow"
+            x="-100%" y="-100%"
+            width="300%" height="300%"
+            color-interpolation-filters="sRGB">
+
+            <!-- Outer glow -->
+            <feGaussianBlur in="SourceAlpha"
+                stdDeviation="3.5"
+                result="outerBlur"/>
+
+            <feFlood flood-color="#FFC45E"
+                flood-opacity="0.8"
+                result="outerColor"/>
+
+            <feComposite in="outerColor"
+                in2="outerBlur"
+                operator="in"
+                result="outerGlow"/>
+
+            <!-- Inner glow -->
+            <feGaussianBlur in="SourceAlpha"
+                stdDeviation="1.5"
+                result="innerBlur"/>
+
+            <feFlood flood-color="#FFF0B5"
+                flood-opacity="0.8"
+                result="innerColor"/>
+
+            <feComposite in="innerColor"
+                in2="innerBlur"
+                operator="in"
+                result="innerGlow"/>
+
+            <feMerge>
+                <feMergeNode in="outerGlow"/>
+                <feMergeNode in="innerGlow"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+
+        </filter>
+
+    </defs>
+
+    <!-- Main golden sparkle -->
+    <g filter="url(#glow)">
+
+        <path id="star"
+            d="
+                M32 4
+                C36.5 21 42 27 60 36
+                C42 43 36.5 49 32 68
+                C27.5 49 22 43 4 36
+                C22 27 27.5 21 32 4
+                Z"
+            fill="url(#metalGradient)"
+            stroke="none"
+        />
+
+    </g>
+
+    <!-- Soft surface illumination -->
+    <g clip-path="url(#starClip)">
+
+        <rect
+            x="0" y="0"
+            width="64" height="72"
+            fill="url(#specularGradient)"
+        />
+
+    </g>
+
+</svg>

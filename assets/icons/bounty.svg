@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#FFE5A0"/>
+      <stop offset=".45" stop-color="#E9B75F"/>
+      <stop offset="1" stop-color="#C58A43"/>
+    </linearGradient>
+
+    <linearGradient id="roll" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFE9AC"/>
+      <stop offset=".4" stop-color="#E8B45E"/>
+      <stop offset="1" stop-color="#A86C32"/>
+    </linearGradient>
+
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF0BD"/>
+      <stop offset="1" stop-color="#A96E35"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Shadow -->
+  <path d="M8 12 L55 19 L46 52 L4 44Z"
+        fill="#080B17" opacity=".4"/>
+
+  <!-- Parchment -->
+  <path d="M12 9 L55 17 L46 49 L5 42Z"
+        fill="url(#paper)"
+        stroke="#9E682F"
+        stroke-width="1.2"
+        stroke-linejoin="round"/>
+
+  <!-- Paper shading -->
+  <path d="M12 12 L51 19 L43 45 L8 40Z"
+        fill="none"
+        stroke="#FFF0BD"
+        stroke-width=".8"
+        opacity=".65"/>
+
+  <!-- Top rolled rod -->
+  <path d="M9 8 Q5 7 4 11 Q3 15 8 16
+           L53 23 Q59 24 61 19
+           Q63 14 58 12 L14 6
+           Q10 5 9 8Z"
+        fill="url(#roll)"
+        stroke="#9C632D"
+        stroke-width="1.2"/>
+
+  <!-- Top roll highlight -->
+  <path d="M10 8 L55 15"
+        stroke="#FFF0B8"
+        stroke-width="1.3"
+        stroke-linecap="round"/>
+
+  <!-- Top right curled end -->
+  <path d="M57 12 Q62 12 62 17
+           Q62 22 57 22
+           Q54 21 56 18
+           Q58 16 60 18"
+        fill="url(#roll)"
+        stroke="#A66B32"
+        stroke-width="1.2"/>
+
+  <!-- Bottom rolled rod -->
+  <path d="M5 39 Q1 40 2 44
+           Q3 49 8 49
+           L43 55 Q48 56 49 51
+           Q50 47 45 46
+           L9 39 Q6 38 5 39Z"
+        fill="url(#roll)"
+        stroke="#A66B32"
+        stroke-width="1.2"/>
+
+  <!-- Bottom left curled end -->
+  <path d="M5 39 Q1 38 1 43
+           Q1 48 6 49
+           Q10 49 10 45
+           Q9 42 6 43
+           Q4 44 5 46"
+        fill="url(#roll)"
+        stroke="#A66B32"
+        stroke-width="1.1"/>
+
+  <!-- Parchment writing -->
+  <g fill="none"
+     stroke="#79502B"
+     stroke-width="1.5"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+
+    <path d="M23 17 L35 19 M29 15 L27 23
+             M23 20 L34 22"/>
+
+    <path d="M38 19 L43 20
+             M40 17 L39 24
+             M37 23 L44 24"/>
+
+    <path d="M19 25 L30 27
+             M24 23 L22 31
+             M20 28 L29 30"/>
+
+    <path d="M34 27 L42 28
+             M38 25 L36 32
+             M34 31 L41 33"/>
+
+    <path d="M16 34 L26 36
+             M21 32 L19 39
+             M16 37 L25 39"/>
+
+    <path d="M30 35 L38 37
+             M34 34 L32 41"/>
+  </g>
+
+  <!-- Small parchment highlights -->
+  <path d="M13 11 L51 18"
+        stroke="#FFF4CF"
+        stroke-width=".7"
+        opacity=".8"/>
+</svg>
