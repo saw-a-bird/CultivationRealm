@@ -44,7 +44,7 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --clean --noconfirm --onefile --windowed --name CultivationRealm --icon=assets/CultivationRealm.ico CultivationRealm.py
+          pyinstaller --clean --noconfirm --onefile --windowed --name CultivationRealm --icon=assets/CultivationRealm.ico --add-data "assets/icons;assets/icons" CultivationRealm.py
 
       # Generate the MSIX version.
       - name: Determine package version
@@ -94,6 +94,14 @@ jobs:
 
           # Copy executable.
           Copy-Item "dist/CultivationRealm.exe" "$staging/CultivationRealm.exe"
+
+          # Copy required SVG icons.
+          if (-not (Test-Path "assets/icons")) {
+              throw "Missing required icons directory: assets/icons"
+          }
+
+          New-Item -ItemType Directory -Force -Path "$staging/assets" | Out-Null
+          Copy-Item "assets/icons" "$staging/assets/icons" -Recurse
 
           # Check and copy required assets.
           $assets = @(
