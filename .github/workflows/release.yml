@@ -44,7 +44,7 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --clean --noconfirm --onefile --windowed --name CultivationRealm --icon=assets/CultivationRealm.ico --add-data "assets/icons;assets/icons" CultivationRealm.py
+          pyinstaller --clean --noconfirm --onefile --windowed --name CultivationRealm --icon=assets/CultivationRealm.ico --add-data "assets/icons;assets/icons" --add-data "assets/fonts;assets/fonts" CultivationRealm.py
 
       # Generate the MSIX version.
       - name: Determine package version
@@ -102,6 +102,13 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path "$staging/assets" | Out-Null
           Copy-Item "assets/icons" "$staging/assets/icons" -Recurse
+
+          # Copy required fonts.
+          if (-not (Test-Path "assets/fonts")) {
+              throw "Missing required fonts directory: assets/fonts"
+          }
+
+          Copy-Item "assets/fonts" "$staging/assets/fonts" -Recurse
 
           # Check and copy required assets.
           $assets = @(

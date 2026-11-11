@@ -13,9 +13,8 @@ import tkinter.font as tkfont
 import math
 import ctypes
 import pystray
-from StarIcon import StarIcon, StarIconColors
+from AssetHandler import AssetHandler, StarIconColors, ASSET_TYPES
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
-from pathlib import Path
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -616,13 +615,12 @@ class CultivationRealmMain:
 
         tk_font = tkfont.Font(font=font)
 
-        family = tk_font.actual("family")
         size = abs(int(tk_font.actual("size")))
         weight = tk_font.actual("weight")
 
-        ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+        FONTS_DIR = AssetHandler._get_assets_path(ASSET_TYPES.FONTS)
 
-        font_path = ASSETS_DIR / (
+        font_path = FONTS_DIR / (
             "georgiab.ttf" if weight == "bold" else "georgia.ttf"
         )
 
@@ -1303,8 +1301,8 @@ class CultivationRealmMain:
         xp_next_row = tk.Frame(rank_content, bg=PANEL)
         xp_next_row.pack(anchor="w", padx=(padding_xl, 0))
 
-        self.total_xp_icon = StarIcon.svg_to_photo(
-            StarIcon.chevrons_down_svg(),
+        self.total_xp_icon = AssetHandler.svg_to_photo(
+            AssetHandler.chevrons_down_svg(),
             size=(24, 24)
         )
 
@@ -3422,7 +3420,7 @@ class CultivationRealmMain:
         actions = tk.Frame(info_row, bg="#211F38")
         actions.pack(side="left")
 
-        star_svg = StarIcon.make_star_svg(
+        star_svg = AssetHandler.make_star_svg(
             color=PURPLE,
             glow_radius=10,
             glow_strength=0.6,
@@ -3430,7 +3428,7 @@ class CultivationRealmMain:
             reflection_strength=0
         )
 
-        star_image = StarIcon.svg_to_photo(star_svg, size=(20, 20))
+        star_image = AssetHandler.svg_to_photo(star_svg, size=(20, 20))
 
         self.next_recom_reward = self.make_button(
             actions,
@@ -5626,8 +5624,6 @@ class CultivationRealmMain:
         )
 
         def draw_rounded_rect(x1, y1, x2, y2, r=12):
-            import math
-
             points = []
 
             corners = [
@@ -6435,7 +6431,7 @@ class CultivationRealmMain:
             font=font
         )
 
-        arrow_image = StarIcon.svg_to_photo(
+        arrow_image = AssetHandler.svg_to_photo(
             "chevron-down.svg",
             size=arrow_size
         )
@@ -7660,11 +7656,11 @@ class CultivationRealmMain:
         size = size or (22, 22)
 
         if filled == False:
-            star_svg = StarIcon.make_star_svg_hollow(color=color, glow_radius=glow_radius, glow_strength=glow_strength, reflective=True, reflection_strength=0)
+            star_svg = AssetHandler.make_star_svg_hollow(color=color, glow_radius=glow_radius, glow_strength=glow_strength, reflective=True, reflection_strength=0)
         else:
-            star_svg = StarIcon.make_star_svg(color=color, glow_radius=glow_radius, glow_strength=glow_strength, reflective=True, reflection_strength=0)
+            star_svg = AssetHandler.make_star_svg(color=color, glow_radius=glow_radius, glow_strength=glow_strength, reflective=True, reflection_strength=0)
 
-        star_image = StarIcon.svg_to_photo(star_svg, size=size)
+        star_image = AssetHandler.svg_to_photo(star_svg, size=size)
 
         # frame = tk.Frame(heading, bg=PANEL)
         # frame.pack(anchor="w")
@@ -7688,13 +7684,13 @@ class CultivationRealmMain:
 
         if icon_type == "star":
             if star[0] == False:
-                icon = StarIcon.make_star_svg_hollow(color=star[1], glow_radius=10, glow_strength=0.6, reflective=True, reflection_strength=0)
+                icon = AssetHandler.make_star_svg_hollow(color=star[1], glow_radius=10, glow_strength=0.6, reflective=True, reflection_strength=0)
             else:
-                icon = StarIcon.make_star_svg(color=star[1], glow_radius=10, glow_strength=0.6, reflective=True, reflection_strength=0)
+                icon = AssetHandler.make_star_svg(color=star[1], glow_radius=10, glow_strength=0.6, reflective=True, reflection_strength=0)
         else:
             icon = icon_type+".svg"
 
-        star_image = StarIcon.svg_to_photo(icon, size=size, glow=glow)
+        star_image = AssetHandler.svg_to_photo(icon, size=size, glow=glow)
 
         # frame = tk.Frame(heading, bg=PANEL)
         # frame.pack(anchor="w")
