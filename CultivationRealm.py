@@ -3,7 +3,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, date, timedelta
 from collections import defaultdict
-from PIL import Image, ImageDraw, ImageFilter, ImageTk
 import time
 import random
 import json
@@ -11,10 +10,12 @@ import os
 import sys
 import re
 import tkinter.font as tkfont
-
+import math
 import ctypes
 import pystray
 from StarIcon import StarIcon, StarIconColors
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
+from pathlib import Path
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -38,6 +39,21 @@ GOLD = "#F5C66A"
 GREEN = "#65D6A0"
 RED = "#F08080"
 BLUE = "#79B8F5"
+
+PULSE_GOLD_RECYCLE = [
+    "#997a45",
+    "#b99a63",
+    "#d6b778",
+    "#f0d49a",
+    "#d6b778",
+    "#b99a63"
+]
+
+GLOW_MIN_INTENSITY = 0.3   # Minimum glow (0.0 - 1.0)
+GLOW_MAX_INTENSITY = 1.00   # Maximum glow (0.0 - 1.0)
+GLOW_CHANGE_SPEED = 0.1   # Higher = faster breathing
+GLOW_UPDATE_MS = 10         # Animation refresh interval
+GLOW_SCALE = 2
 
 # --------- SMALL REWARDS
 def get_cultivation_session_reward(elapsed):
@@ -541,16 +557,7 @@ class CultivationRealmMain:
         self._sparkle_step = (step + 1) % len(colors)
         self.root.after(180, self.animate_header_sparkle)
 
-    def pulse_reset_border(self, reset_btn):
-        colors = [
-            "#997a45",
-            "#b99a63",
-            "#d6b778",
-            "#f0d49a",
-            "#d6b778",
-            "#b99a63"
-        ]
-
+    def pulse_reset_button(self, reset_btn):
         index = 0
 
         def pulse():
@@ -561,8 +568,8 @@ class CultivationRealmMain:
 
             current_tab_index = self.notebook.index(self.notebook.select())
             if current_tab_index == 2:
-                reset_btn.update_text_color(colors[index])
-                index = (index + 1) % len(colors)
+                reset_btn.update_text_color(PULSE_GOLD_RECYCLE[index])
+                index = (index + 1) % len(PULSE_GOLD_RECYCLE)
 
             reset_btn.after(120, pulse)
 
@@ -585,6 +592,264 @@ class CultivationRealmMain:
             popup.after(35, lambda: shake(step + 1))
         popup.after(100, shake)
 
+    def pulse_reset_title(self, title, popup_container):
+        index = 0
+
+        def pulse():
+            nonlocal index
+            if not title.winfo_exists():
+                return
+
+            title.config(fg=PULSE_GOLD_RECYCLE[index])
+            index = (index + 1) % len(PULSE_GOLD_RECYCLE)
+
+            popup_container.after(180, pulse)
+
+        pulse()
+
+    def create_rank_glow(self, parent, text, bg, fg, font):
+        self._rank_text = text
+        self._rank_bg = bg
+        self._rank_fg = fg
+        self._rank_phase = 0.0
+        scale = GLOW_SCALE
+
+        tk_font = tkfont.Font(font=font)
+
+        family = tk_font.actual("family")
+        size = abs(int(tk_font.actual("size")))
+        weight = tk_font.actual("weight")
+
+        ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+        font_path = ASSETS_DIR / (
+            "georgiab.ttf" if weight == "bold" else "georgia.ttf"
+        )
+
+        self._rank_pil_font = ImageFont.truetype(
+            str(font_path),
+            size * scale
+        )
+
+        bbox = self._rank_pil_font.getbbox(text)
+
+        pad_left = 18 * scale
+        pad_right = 18 * scale
+        pad_top = 18 * scale
+        pad_bottom = 18 * scale
+
+        width = bbox[2] - bbox[0] + pad_left + pad_right
+        height = bbox[3] - bbox[1] + pad_top + pad_bottom
+
+        self._rank_image_size = (
+            (width + scale - 1) // scale,
+            (height + scale - 1) // scale
+        )
+
+        # Create text mask
+        mask = Image.new("L", (width, height), 0)
+
+        draw = ImageDraw.Draw(mask)
+        draw.text(
+            (pad_left - bbox[0], pad_top - bbox[1]),
+            text,
+            font=self._rank_pil_font,
+            fill=255
+        )
+
+        # Two genuinely blurred glow layers
+        self._rank_wide_glow = mask.filter(
+            ImageFilter.GaussianBlur(12 * scale)
+        )
+
+        self._rank_tight_glow = mask.filter(
+            ImageFilter.GaussianBlur(5 * scale)
+        )
+
+        self._rank_text_mask = mask
+
+        self.rank_glow_canvas = tk.Canvas(
+            parent,
+            width=self._rank_image_size[0],
+            height=self._rank_image_size[1],
+            bg=bg,
+            bd=0,
+            highlightthickness=0
+        )
+
+        self.rank_glow_canvas.pack(anchor="w", padx=(0, 0))
+
+        self._rank_canvas_image = self.rank_glow_canvas.create_image(
+            0, 0, anchor="nw"
+        )
+
+    def pulse_rank_label(self):
+
+        try:
+            if not self.root.winfo_exists():
+                return
+
+            if not self.rank_glow_canvas.winfo_exists():
+                return
+
+            colors = PULSE_GOLD_RECYCLE
+
+            # Smooth palette interpolation
+            self._rank_phase = (
+                self._rank_phase + GLOW_CHANGE_SPEED
+            ) % len(colors)
+
+            index = int(self._rank_phase)
+            fraction = self._rank_phase - index
+
+            c1 = colors[index]
+            c2 = colors[(index + 1) % len(colors)]
+
+            rgb1 = tuple(
+                int(c1[i:i+2], 16) for i in (1, 3, 5)
+            )
+            rgb2 = tuple(
+                int(c2[i:i+2], 16) for i in (1, 3, 5)
+            )
+
+            glow_rgb = tuple(
+                int(a + (b - a) * fraction)
+                for a, b in zip(rgb1, rgb2)
+            )
+
+            # Breathing intensity
+            breathing = (
+                0.5 + 0.5 * math.sin(
+                    self._rank_phase * math.pi / 3
+                )
+            )
+
+            intensity = (
+                GLOW_MIN_INTENSITY
+                + (GLOW_MAX_INTENSITY - GLOW_MIN_INTENSITY)
+                * breathing
+            )
+
+            def make_glow(mask, strength):
+                alpha = mask.point(
+                    lambda p: int(p * strength * intensity)
+                )
+
+                layer = Image.new(
+                    "RGBA", mask.size, (*glow_rgb, 0)
+                )
+                layer.putalpha(alpha)
+                return layer
+
+            # Composite the actual blurred aura
+            image = Image.new(
+                "RGBA",
+                self._rank_text_mask.size,
+                self._rank_bg
+            )
+
+            wide = make_glow(self._rank_wide_glow, 0.65)
+            tight = make_glow(self._rank_tight_glow, 0.85)
+
+            image = Image.alpha_composite(image, wide)
+            image = Image.alpha_composite(image, tight)
+
+            # Sharp foreground text
+            foreground = Image.new(
+                "RGBA",
+                self._rank_text_mask.size,
+                self._rank_fg
+            )
+            foreground.putalpha(self._rank_text_mask)
+
+            image = Image.alpha_composite(image, foreground)
+
+            # High-quality downsampling
+            image = image.resize(
+                self._rank_image_size,
+                Image.Resampling.LANCZOS
+            )
+
+            self._rank_photo = ImageTk.PhotoImage(image)
+
+            self.rank_glow_canvas.itemconfigure(
+                self._rank_canvas_image,
+                image=self._rank_photo
+            )
+
+            self.root.after(GLOW_UPDATE_MS, self.pulse_rank_label)
+
+        except tk.TclError:
+            return
+
+    def set_rank_text(self, new_text):
+        try:
+            if not self.rank_glow_canvas.winfo_exists():
+                return
+
+            self._rank_text = new_text
+
+            # Recreate the text mask
+            bbox = self._rank_pil_font.getbbox(new_text)
+
+            scale = GLOW_SCALE
+            
+            pad_left = 18 * scale
+            pad_right = 18 * scale
+            pad_top = 18 * scale
+            pad_bottom = 18 * scale
+
+            width = bbox[2] - bbox[0] + pad_left + pad_right
+            height = bbox[3] - bbox[1] + pad_top + pad_bottom
+
+            mask = Image.new("L", (width, height), 0)
+
+            draw = ImageDraw.Draw(mask)
+            draw.text(
+                (pad_left - bbox[0], pad_top - bbox[1]),
+                new_text,
+                font=self._rank_pil_font,
+                fill=255
+            )
+
+            # Update all glow assets
+            self._rank_wide_glow = mask.filter(
+                ImageFilter.GaussianBlur(12 * scale)
+            )
+
+            self._rank_tight_glow = mask.filter(
+                ImageFilter.GaussianBlur(5 * scale)
+            )
+
+            self._rank_text_mask = mask
+
+            # Cropping
+            crop_box = self._rank_wide_glow.point(
+                lambda p: 255 if p > 2 else 0
+            ).getbbox()
+
+            if crop_box:
+                self._rank_text_mask = self._rank_text_mask.crop(crop_box)
+                self._rank_wide_glow = self._rank_wide_glow.crop(crop_box)
+                self._rank_tight_glow = self._rank_tight_glow.crop(crop_box)
+
+            # Calculate dimensions AFTER cropping
+            self._rank_image_size = (
+                (self._rank_text_mask.width + scale - 1) // scale,
+                (self._rank_text_mask.height + scale - 1) // scale
+            )
+
+            # Create Canvas
+            self.rank_glow_canvas.configure(
+                width=self._rank_image_size[0],
+                height=self._rank_image_size[1],
+            )
+
+            # Keep animation phase unchanged
+            # Next pulse_rank_label() renders the new text
+
+        except tk.TclError:
+            return
     # endregion
     
     # region ---------------- TITLE BAR ----------------
@@ -908,20 +1173,23 @@ class CultivationRealmMain:
 
         # Cultivation rank
         rank_card, rank_content = self.make_card(
-            left, "Cultivation Realm", None, title_color="#9A85BA", icon_type="star", content_pady=(2,0)
+            left, "Cultivation Realm", None, title_color="#9A85BA", icon_type="star", content_pady=(2,0), 
+            content_padx=(0, 12), heading_padx=12
         )
         rank_card.pack(fill="x", pady=(0, 8))
 
         # Main title
-        self.rank_label = tk.Label(
-            rank_content,
+        self.create_rank_glow(
+            parent=rank_content,
             text="BODY REFINEMENT",
             bg=PANEL,
             fg="#FFD477",
-            font=("Georgia", 24, "bold")
+            font=("Georgia", 34, "bold")
         )
-        self.rank_label.pack(anchor="w")
-        
+
+        self.pulse_rank_label()
+        padding_xl = 18
+
         # Badge text
         self.level_badge = self.make_rounded_badge(
             rank_content,
@@ -933,6 +1201,7 @@ class CultivationRealmMain:
             outline_color="#7650B8",
             text_color="#FFFFFF",
             font=("Segoe UI", 10, "bold"),
+            padx=(padding_xl, 0),
             pady=(4, 0)
         )
         
@@ -945,11 +1214,11 @@ class CultivationRealmMain:
             font=("Segoe UI", 8),
             anchor="w"
         )
-        self.rank_description.pack(fill="x", pady=(6, 25))
+        self.rank_description.pack(fill="x", padx=(padding_xl, 0), pady=(6, 25))
 
         # XP + percentage
         xp_header = tk.Frame(rank_content, bg=PANEL)
-        xp_header.pack(fill="x")
+        xp_header.pack(fill="x", padx=(padding_xl+4, 0))
 
         # Current XP
         self.xp_canvas = tk.Canvas(
@@ -997,7 +1266,7 @@ class CultivationRealmMain:
 
         # Progress bar styling
         xp_progress_row = tk.Frame(rank_content, bg=PANEL)
-        xp_progress_row.pack(fill="x", pady=(0, 0))
+        xp_progress_row.pack(fill="x", padx=(padding_xl, 0), pady=(0, 0))
 
         # Progress bar
         self.xp_progress = tk.Canvas(
@@ -1032,7 +1301,7 @@ class CultivationRealmMain:
         # Remaining XP
         # XP to next level row
         xp_next_row = tk.Frame(rank_content, bg=PANEL)
-        xp_next_row.pack(anchor="w")
+        xp_next_row.pack(anchor="w", padx=(padding_xl, 0))
 
         self.total_xp_icon = StarIcon.svg_to_photo(
             StarIcon.chevrons_down_svg(),
@@ -1068,6 +1337,7 @@ class CultivationRealmMain:
             content_pady=(2, 5),
             border_color="#95825A",
             icon_type="diagram",
+            
             icon_size=(28, 28)
         )
 
@@ -1093,7 +1363,7 @@ class CultivationRealmMain:
             glow=True
         )
         rank_content2.pack(fill="x", expand=True)
-        rank_card2.pack(fill="both", pady=(10, 0))
+        rank_card2.pack(fill="both", padx=(padding_xl, 0), pady=(10, 0))
         
         # region DAILY STREAK & LIFETIME XP
 
@@ -1382,7 +1652,12 @@ class CultivationRealmMain:
 
         # region Mission controls
         control_card, control_content = self.make_card(
-            right, "Cultivation", "Choose your path and begin your training"
+            right, "Cultivation", "Choose your path and begin your training",
+            icon_type="crest",
+            icon_size=(46, 82),
+            content_pady=(4, 2),
+            icon_with_subtitle=True
+
         ) #"Focus begins with a single decision"
         control_card.pack(fill="x", pady=(0, 8))
 
@@ -1696,7 +1971,7 @@ class CultivationRealmMain:
         )
         reset_btn.pack(side="left")
 
-        self.pulse_reset_border(reset_btn)
+        self.pulse_reset_button(reset_btn)
         
         # chronicle_content.pack_propagate(True)
 
@@ -1743,24 +2018,6 @@ class CultivationRealmMain:
 
         # endregion
      
-        # ---------- ANIMATION ----------
-        self._accent_animation_id = None
-
-        def animate_accent():
-            try:
-                if not self.root.winfo_exists():
-                    return
-                
-                current = self.rank_label.cget("fg")
-                next_color = GOLD if current == PURPLE else PURPLE
-                self.rank_label.configure(fg=next_color)
-                self._accent_animation_id = self.root.after(
-                    900, animate_accent
-                )
-            except tk.TclError:
-                return
-
-        animate_accent()
 
     def _build_mission_card(self, parent, item, status, today_str):
         is_daily = item.get("is_daily", False)
@@ -2946,7 +3203,8 @@ class CultivationRealmMain:
         realm = self.get_realm()
 
         # Current realm
-        self.rank_label.config(text=realm["name"].upper())
+        # self.rank_label.config(text=realm["name"].upper())
+        self.set_rank_text(realm["name"].upper())
         # self.level_label.config(text=f"LEVEL {self.level}")
         self.level_badge.itemconfig(
             "level_text",
@@ -3728,32 +3986,6 @@ class CultivationRealmMain:
             bg=bg
         )
         title.pack(pady=(8, 10))
-
-        # Golden glow pulse
-        glow_colors = [
-            "#8f6b32",
-            "#bd914b",
-            "#e8bb69",
-            "#fff0b3",
-            "#e8bb69",
-            "#bd914b"
-        ]
-
-        pulse_index = [0]
-
-        def pulse_title():
-            if not popup.winfo_exists():
-                return
-
-            title.config(
-                fg=glow_colors[pulse_index[0]]
-            )
-
-            pulse_index[0] = (
-                pulse_index[0] + 1
-            ) % len(glow_colors)
-
-            popup_container.after(180, pulse_title)
 
         pulse_title()
 
@@ -4684,30 +4916,6 @@ class CultivationRealmMain:
             radius=(10, 5)
         ).pack(side="left", pady=10, padx=6)
 
-        # Pulsating title
-        glow_colors = [
-            "#98733d",
-            "#bd914b",
-            "#e8bb69",
-            "#fff0b3",
-            "#e8bb69",
-            "#bd914b"
-        ]
-
-        pulse_index = [0]
-
-        def pulse_title():
-            if not popup.winfo_exists():
-                return
-
-            title.config(fg=glow_colors[pulse_index[0]])
-
-            pulse_index[0] = (
-                pulse_index[0] + 1
-            ) % len(glow_colors)
-
-            popup_container.after(180, pulse_title)
-
         # Floating magical particles
         particles = []
 
@@ -4784,7 +4992,7 @@ class CultivationRealmMain:
         self.adjust_popup_dimensions(popup, (width, height), with_lift=True)
 
         # Start animations
-        pulse_title()
+        self.pulse_reset_title(title, popup_container)
         popup.after(100, create_particles)
 
         # Display popup
@@ -5386,6 +5594,7 @@ class CultivationRealmMain:
         subtitle_color=MUTED,
         border_color = "#705A42",
         card_bg=PANEL,
+        heading_padx = None,
         content_padx = 12,
         content_pady = (14, 17), # (10, 0) if has_content
         border_radius = 12,
@@ -5513,7 +5722,7 @@ class CultivationRealmMain:
         heading = tk.Frame(inner, bg=card_bg)
         heading.pack(
             fill="x",
-            padx=content_padx,
+            padx=heading_padx or content_padx,
             pady=(10, 0) if has_content else content_pady
         )
 
@@ -5577,7 +5786,7 @@ class CultivationRealmMain:
             content.pack(
                 fill="both",
                 expand=True,
-                padx=12,
+                padx=content_padx,
                 pady=content_pady
             )
             
@@ -5785,6 +5994,7 @@ class CultivationRealmMain:
         outline_color="#7650B8",
         text_color="#FFFFFF",
         font=("Segoe UI", 10, "bold"),
+        padx=0,
         pady=(4, 0)
     ):
         badge = tk.Canvas(
@@ -5795,7 +6005,7 @@ class CultivationRealmMain:
             highlightthickness=0,
             bd=0
         )
-        badge.pack(anchor="w", pady=pady)
+        badge.pack(anchor="w", padx=padx, pady=pady)
 
         # Keep radius within valid bounds
         radius = min(radius, width / 2, height / 2)
@@ -6684,6 +6894,7 @@ class CultivationRealmMain:
 
                 mission["status"] = "completed"
                 mission["completed_date"] = today_str
+                
             self.total_completed_bounties += 1
 
             # Record completion
