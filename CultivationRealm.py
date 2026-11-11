@@ -157,7 +157,6 @@ LEVEL_UP_MESSAGES = [
     "Keep going. The heavens are not your limit!",
 ]
 
-
 # -------------- REVIEW RESPONSES --------------------
 
 REVIEW_RESPONSES = {
@@ -591,18 +590,18 @@ class CultivationRealmMain:
             popup.after(35, lambda: shake(step + 1))
         popup.after(100, shake)
 
-    def pulse_reset_title(self, title, popup_container):
+    def pulse_label(self, label, popup_container, speed = 180):
         index = 0
 
         def pulse():
             nonlocal index
-            if not title.winfo_exists():
+            if not label.winfo_exists():
                 return
 
-            title.config(fg=PULSE_GOLD_RECYCLE[index])
+            label.config(fg=PULSE_GOLD_RECYCLE[index])
             index = (index + 1) % len(PULSE_GOLD_RECYCLE)
 
-            popup_container.after(180, pulse)
+            popup_container.after(speed, pulse)
 
         pulse()
 
@@ -1191,7 +1190,7 @@ class CultivationRealmMain:
         # Badge text
         self.level_badge = self.make_rounded_badge(
             rank_content,
-            "LEVEL 6",
+            "LEVEL --",
             width=108,
             height=29,
             radius=14,
@@ -3197,15 +3196,16 @@ class CultivationRealmMain:
         canvas.coords(self.xp_max, x, baseline)
 
     def ui_render_dashboard_xp_display(self):
-        current_xp, requirement = self.calculate_progression()
-        realm = self.get_realm()
+        current_xp, realm = self.calculate_progression()
+        requirement = realm["xp_required"]
 
         # Current realm
         # self.rank_label.config(text=realm["name"].upper())
         self.set_rank_text(realm["name"].upper())
+
         # self.level_label.config(text=f"LEVEL {self.level}")
         self.level_badge.itemconfig(
-            "level_text",
+            self.level_badge.text_id,
             text=f"LEVEL {self.level}"
         )
         self.rank_description.config(text=realm["description"])
@@ -3878,7 +3878,6 @@ class CultivationRealmMain:
         popup.wait_window()
 
     def render_level_up_popup(self, breakthrough=False):
-
         bg = "#171923"
         gold = "#e8bb69"
         purple = "#b9a3ff"
@@ -3976,16 +3975,16 @@ class CultivationRealmMain:
             if breakthrough else "LEVEL UP!"
         )
 
-        title = tk.Label(
+        title_label = tk.Label(
             content,
             text=title_text,
             font=("Segoe UI", 21 if breakthrough else 25, "bold"),
             fg=gold,
             bg=bg
         )
-        title.pack(pady=(8, 10))
+        title_label.pack(pady=(8, 10))
 
-        pulse_title()
+        self.pulse_label(title_label, content, 80)
 
         tk.Label(
             content,
@@ -4827,14 +4826,14 @@ class CultivationRealmMain:
         icon.pack(pady=(8, 2))
 
         # Dramatic title
-        title = tk.Label(
+        title_label = tk.Label(
             content,
             text="RESTART CULTIVATION",
             bg=bg,
             fg=gold,
             font=("Segoe UI", 19, "bold")
         )
-        title.pack(pady=(5, 12))
+        title_label.pack(pady=(5, 12))
 
         # Subtitle
         tk.Label(
@@ -4990,7 +4989,7 @@ class CultivationRealmMain:
         self.adjust_popup_dimensions(popup, (width, height), with_lift=True)
 
         # Start animations
-        self.pulse_reset_title(title, popup_container)
+        self.pulse_label(title_label, popup_container)
         popup.after(100, create_particles)
 
         # Display popup
@@ -5582,6 +5581,7 @@ class CultivationRealmMain:
                 lambda event: bind_recursive(container),
                 add="+"
             )
+ 
     # ---------- HELPERS ----------
     def make_card(
         self,
@@ -6038,7 +6038,7 @@ class CultivationRealmMain:
             width=1
         )
 
-        badge.create_text(
+        badge.text_id = badge.create_text(
             width / 2,
             (height / 2) - 2,
             text=content_text,
@@ -6703,6 +6703,26 @@ class CultivationRealmMain:
 
     # region Dashboard
 
+    def calculate_progression(self): # ONLY FOR INIT
+        remaining_xp = max(0, int(self.xp))
+        level = 0
+
+        for low, high, name, description, subtitle, requirement in REALMS:
+            if remaining_xp < requirement:
+                realm = {
+                    "name": name,
+                    "description": description,
+                    "subtitle": subtitle,
+                    "xp_required": requirement
+                }
+                break
+
+            remaining_xp -= requirement
+            level = high + 1
+
+        self.level = level
+        return remaining_xp, realm
+    
     def get_realm(self, level=None):
         level = self.level if level is None else level
         for low, high, name, description, subtitle, requirement in REALMS:
@@ -6713,12 +6733,6 @@ class CultivationRealmMain:
                     "subtitle": subtitle,
                     "xp_required": requirement
                 }
-        return {
-            "name": "TRANSCENDENCE",
-            "description": "Beyond the Dao. Beyond the heavens.",
-            "subtitle": "There are no limits left to inherit.",
-            "xp_required": 3000
-        }
  
     def award_xp(self, amount):
         old_level = self.level
@@ -7239,21 +7253,7 @@ class CultivationRealmMain:
         self.root.lift()
 
         self.render_inspection_report_popup()
-
-    def calculate_progression(self):
-        remaining_xp = max(0, int(self.xp))
-        level = 0
-
-        while True:
-            requirement = self.get_realm(level)["xp_required"]
-            if remaining_xp < requirement:
-                break
-            remaining_xp -= requirement
-            level += 1
-
-        self.level = level
-        return remaining_xp, self.get_realm(level)["xp_required"]
-
+        
     def award_getting_started_bonus(self):
         today = datetime.now().date()
         today_text = today.isoformat()
@@ -7390,7 +7390,7 @@ class CultivationRealmMain:
 
             self.xp = max(0, int(data.get("xp", 0)))
             self.total_completed_bounties = max(0, int(data.get("total_completed_bounties", 0)))
-            self.calculate_progression()
+            # self.calculate_progression()
 
             saved_projects = data.get("projects")
             if isinstance(saved_projects, dict):
@@ -7606,6 +7606,7 @@ class CultivationRealmMain:
             self.render_restart_cultivation_popup(on_confirm)
 
     def confirm_clear_history(self):
+        # self.render_level_up_popup(breakthrough=True)
         def clear_history():
             if self.history:
                 self.history.clear()
